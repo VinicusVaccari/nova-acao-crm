@@ -1,0 +1,79 @@
+import { agendaConectada, listarEventos } from '@/lib/google'
+import { db } from '@/lib/db'
+import { AgendaSemana, AgendaConectar } from '@/components/agenda'
+
+export type NegocioOpcao = { id: string; nome: string }
+
+async function negociosAbertos(): Promise<NegocioOpcao[]> {
+  const { data } = await db
+    .from('opportunities')
+    .select('id, title, stage, people:person_id ( full_name )')
+    .neq('stage', 'perdido')
+    .order('stage_since', { ascending: false })
+    .limit(300)
+  return (data ?? [])
+    .filter(o => o.stage !== 'ganho' && o.stage !== 'cliente')
+    .map(o => ({
+      id: o.id as string,
+      nome: (o.title as string) || ((o.people as { full_name?: string } | null)?.full_name) || 'Sem nome',
+    }))
+}
+
+export const dynamic = 'force-dynamic'
+
+/* Brasil não tem mais horário de verão → BRT é sempre UTC−3.
+   Fazemos a matemática de calendário em datas puras (UTC) e fixamos
+   o fuso em −03:00 nas bordas da semana. */
+
+function hojeBRT(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+}
+function addDias(ymd: string, n: number): string {
+  const [y, m, d] = ymd.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() + n)
+  return dt.toISOString().slice(0, 10)
+}
+function segunda0(ymd: string): number {
+  const [y, m, d] = ymd.split('-').map(Number)
+  return (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7 // 0 = segunda
+}
+
+export default async function AgendaPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
+  const sp = await searchParams
+  const { conectada, email } = await agendaConectada()
+
+  const base = sp.dia && /^\d{4}-\d{2}-\d{2}$/.test(sp.dia) ? sp.dia : hojeBRT()
+  const segunda = addDias(base, -segunda0(base))
+  const dias = Array.from({ length: 7 }, (_, i) => addDias(segunda, i))
+
+  const [eventos, negocios] = conectada
+    ? await Promise.all([
+        listarEventos(`${segunda}T00:00:00-03:00`, `${addDias(segunda, 7)}T00:00:00-03:00`),
+        negociosAbertos(),
+      ])
+    : [[], []]
+
+  return (
+    <div className="flex flex-col" style={{ gap: 'var(--s-5)' }}>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="t-h1">Agenda</h1>
+          <p className="t-sm muted">
+            {conectada ? <>Google Calendar{email ? ` · ${email}` : ''}</> : 'Google Calendar não conectado'}
+          </p>
+        </div>
+        <AgendaConectar conectada={conectada} email={email} aviso={sp.conectado ? 'ok' : sp.erro ?? null} />
+      </div>
+
+      {conectada ? (
+        <AgendaSemana dias={dias} hoje={hojeBRT()} eventos={eventos} segunda={segunda} negocios={negocios} />
+      ) : (
+        <div className="card" style={{ padding: 'var(--s-8)', textAlign: 'center' }}>
+          <p className="t-body" style={{ marginBottom: 'var(--s-2)' }}>Conecte o Google Calendar para ver a agenda aqui.</p>
+          <p className="t-sm muted">Depois de conectado, marcar uma reunião num negócio cria o evento direto na agenda.</p>
+        </div>
+      )}
+    </div>
+  )
+}
