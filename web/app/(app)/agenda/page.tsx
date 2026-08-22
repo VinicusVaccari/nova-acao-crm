@@ -54,6 +54,17 @@ export default async function AgendaPage({ searchParams }: { searchParams: Promi
       ])
     : [[], []]
 
+  // e-mails dos colaboradores mais usados — sugestões ao convidar (lista fixa)
+  const colaboradores = [
+    'novaacaomkt@gmail.com',
+    'vaccarivinicius2@gmail.com',
+    'clisnobre@gmail.com',
+    'lincoln.lucena.12@gmail.com',
+    'gabrielaraujo1711@gmail.com',
+    'jtdigitalcompany@gmail.com',
+    'diegomn07@gmail.com',
+  ]
+
   return (
     <div className="flex flex-col" style={{ gap: 'var(--s-5)' }}>
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -67,7 +78,7 @@ export default async function AgendaPage({ searchParams }: { searchParams: Promi
       </div>
 
       {conectada ? (
-        <AgendaSemana dias={dias} hoje={hojeBRT()} eventos={eventos} segunda={segunda} negocios={negocios} />
+        <AgendaSemana dias={dias} hoje={hojeBRT()} eventos={eventos} segunda={segunda} negocios={negocios} colaboradores={colaboradores} />
       ) : (
         <div className="card" style={{ padding: 'var(--s-8)', textAlign: 'center' }}>
           <p className="t-body" style={{ marginBottom: 'var(--s-2)' }}>Conecte o Google Calendar para ver a agenda aqui.</p>

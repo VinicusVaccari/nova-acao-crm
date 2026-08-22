@@ -16,7 +16,8 @@ export function proxy(req: NextRequest) {
     rota.startsWith('/login') ||
     rota.startsWith('/convite') ||
     rota.startsWith('/api/ingest') ||
-    rota.startsWith('/api/whatsapp')
+    rota.startsWith('/api/whatsapp') ||
+    rota.startsWith('/api/naia')
 
   // cookie do @supabase/ssr: sb-<ref>-auth-token (pode vir em pedaços .0/.1)
   const temSessao = req.cookies.getAll().some(c => c.name.startsWith('sb-') && c.name.includes('-auth-token'))

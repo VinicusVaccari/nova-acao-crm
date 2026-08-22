@@ -8,6 +8,8 @@ import {
   criarEmpresaNoDeal, desvincularEmpresa,
 } from '@/lib/actions'
 import { Avatar } from '@/components/ui'
+import { CamposCustom } from '@/components/campos-custom'
+import type { CampoComValor } from '@/lib/campos'
 import { brl, brlCurto, dur, num } from '@/lib/format'
 
 /* ---------------- peças comuns ---------------- */
@@ -226,10 +228,12 @@ export function PainelContato({
   oppId,
   personId,
   contato,
+  campos = [],
 }: {
   oppId: string
   personId: string
   contato: { full_name: string; phone: string | null; email: string | null }
+  campos?: CampoComValor[]
 }) {
   const [edit, setEdit] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -301,6 +305,7 @@ export function PainelContato({
           )}
         </div>
       )}
+      <CamposCustom entityId={personId} campos={campos} />
     </PainelCard>
   )
 }
@@ -311,10 +316,12 @@ export function PainelEmpresa({
   oppId,
   personId,
   empresa,
+  campos = [],
 }: {
   oppId: string
   personId: string
   empresa: { id: string; trade_name: string; cnpj: string | null; address: string | null; website: string | null; segment: string | null } | null
+  campos?: CampoComValor[]
 }) {
   const [edit, setEdit] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -382,6 +389,7 @@ export function PainelEmpresa({
           </div>
         )
       )}
+      {empresa && <CamposCustom entityId={empresa.id} campos={campos} />}
     </PainelCard>
   )
 }

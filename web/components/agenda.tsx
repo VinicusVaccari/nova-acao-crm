@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useState, useTransition } from 'react'
+import { useEffect, useRef, useState, useTransition } from 'react'
 import type { EventoAgenda } from '@/lib/google'
 import { criarReuniaoAgenda, desconectarAgenda } from '@/lib/actions'
 import { Drawer } from '@/components/drawer'
@@ -29,10 +29,18 @@ function partesBRT(iso: string): { ymd: string; hora: number; min: number } {
   return { ymd: `${p.year}-${p.month}-${p.day}`, hora, min: Number(p.minute) }
 }
 
+// cor estável do avatar a partir do e-mail
+function corEmail(s: string): string {
+  const cores = ['#009E9B', '#FAB800', '#412257', '#0e8ecf', '#8b5cf6', '#16a34a']
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
+  return cores[h % cores.length]
+}
+
 const DIAS_SEMANA = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
 const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
-const H_INI = 7
-const H_FIM = 21
+const H_INI = 0
+const H_FIM = 24
 const ROW_H = 48 // px por hora
 
 /* ================= conectar / desconectar ================= */
@@ -69,16 +77,36 @@ export function AgendaConectar({ conectada, aviso }: { conectada: boolean; email
 
 /* ===================== visão de semana ===================== */
 
-export function AgendaSemana({ dias, hoje, eventos, segunda, negocios }: {
+export function AgendaSemana({ dias, hoje, eventos, segunda, negocios, colaboradores = [] }: {
   dias: string[]
   hoje: string
   eventos: EventoAgenda[]
   segunda: string
   negocios: NegocioOpcao[]
+  colaboradores?: string[]
 }) {
   const [sel, setSel] = useState<EventoAgenda | null>(null)
   const [novo, setNovo] = useState<{ dia?: string; hora?: string } | null>(null)
   const horas = Array.from({ length: H_FIM - H_INI }, (_, i) => H_INI + i)
+
+  // linha do "agora" — só no cliente (evita mismatch de hidratação), atualiza a cada minuto
+  const [agora, setAgora] = useState<{ ymd: string; min: number } | null>(null)
+  useEffect(() => {
+    const tick = () => { const p = partesBRT(new Date().toISOString()); setAgora({ ymd: p.ymd, min: p.hora * 60 + p.min }) }
+    tick()
+    const id = setInterval(tick, 60_000)
+    return () => clearInterval(id)
+  }, [])
+
+  // rola pra manhã/hora atual ao montar (o dia inteiro é grande demais pra ver tudo)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const p = partesBRT(new Date().toISOString())
+    const alvoHora = Math.max(H_INI, Math.min(H_FIM - 1, p.hora - 1)) // 1h antes de agora, dentro dos limites
+    el.scrollTop = (alvoHora - H_INI) * ROW_H
+  }, [segunda])
 
   // clique num espaço vazio da coluna → abre o formulário já com dia/hora
   const clicarVazio = (dia: string) => (e: React.MouseEvent<HTMLDivElement>) => {
@@ -114,6 +142,7 @@ export function AgendaSemana({ dias, hoje, eventos, segunda, negocios }: {
         <button className="btn btn-primary btn-sm" onClick={() => setNovo({})}>+ Nova reunião</button>
       </div>
 
+      <div className="ag-scroll" ref={scrollRef}>
       {/* cabeçalho dos dias */}
       <div className="ag-grid ag-head">
         <div className="ag-corner" />
@@ -155,6 +184,11 @@ export function AgendaSemana({ dias, hoje, eventos, segunda, negocios }: {
             onClick={clicarVazio(d)}
             style={{ height: horas.length * ROW_H, backgroundSize: `100% ${ROW_H}px`, cursor: 'pointer' }}
           >
+            {agora && agora.ymd === d && agora.min >= H_INI * 60 && agora.min <= H_FIM * 60 && (
+              <div className="ag-now" style={{ top: (agora.min - H_INI * 60) / 60 * ROW_H }} aria-hidden>
+                <span className="ag-now-dot" />
+              </div>
+            )}
             {doDia(d).filter(e => !e.diaInteiro && e.inicio).map(e => {
               const ini = partesBRT(e.inicio!)
               const fimP = e.fim ? partesBRT(e.fim) : { hora: ini.hora + 1, min: ini.min }
@@ -172,16 +206,18 @@ export function AgendaSemana({ dias, hoje, eventos, segunda, negocios }: {
           </div>
         ))}
       </div>
+      </div>
 
       <EventoDrawer ev={sel} onClose={() => setSel(null)} />
-      {novo && <NovaReuniaoDrawer prefill={novo} negocios={negocios} onClose={() => setNovo(null)} />}
+      {novo && <NovaReuniaoDrawer prefill={novo} negocios={negocios} colaboradores={colaboradores} onClose={() => setNovo(null)} />}
     </div>
   )
 }
 
-function NovaReuniaoDrawer({ prefill, negocios, onClose }: {
+function NovaReuniaoDrawer({ prefill, negocios, colaboradores = [], onClose }: {
   prefill: { dia?: string; hora?: string }
   negocios: NegocioOpcao[]
+  colaboradores?: string[]
   onClose: () => void
 }) {
   const router = useRouter()
@@ -195,6 +231,14 @@ function NovaReuniaoDrawer({ prefill, negocios, onClose }: {
   const [dur, setDur] = useState('60')
   const [comMeet, setComMeet] = useState(true)
   const [convidados, setConvidados] = useState('')
+
+  // adiciona um e-mail de colaborador ao campo (sem duplicar)
+  const addConvidado = (em: string) => setConvidados(prev => {
+    const set = new Set(prev.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean))
+    if (set.has(em)) return prev
+    set.add(em)
+    return [...set].join(', ')
+  })
 
   const criar = () => {
     setErro(null)
@@ -261,7 +305,24 @@ function NovaReuniaoDrawer({ prefill, negocios, onClose }: {
 
         <label className="flex flex-col gap-1">
           <span className="ctx-rotulo">Convidados (opcional)</span>
-          <input className="field" value={convidados} onChange={e => setConvidados(e.target.value)} placeholder="email1@..., email2@..." inputMode="email" />
+          <input className="field" list="ag-colabs" value={convidados} onChange={e => setConvidados(e.target.value)} placeholder="email1@..., email2@..." inputMode="email" />
+          <datalist id="ag-colabs">
+            {colaboradores.map(em => <option key={em} value={em} />)}
+          </datalist>
+          {colaboradores.length > 0 && (
+            <div className="flex flex-col" style={{ gap: 6, marginTop: 6 }}>
+              <span className="t-2xs muted">Colaboradores — clique pra adicionar</span>
+              <div className="flex flex-wrap" style={{ gap: 6 }}>
+                {colaboradores.map(em => (
+                  <button key={em} type="button" className="colab-chip" title={`Adicionar ${em}`} onClick={() => addConvidado(em)}>
+                    <span className="colab-av" style={{ background: corEmail(em) }}>{em[0]?.toUpperCase()}</span>
+                    <span className="colab-em">{em}</span>
+                    <span className="colab-add" aria-hidden>+</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </label>
 
         <label className="flex items-center gap-2" style={{ cursor: 'pointer' }}>

@@ -8,6 +8,7 @@ import { carregarEstagios } from '@/lib/estagios-server'
 import { StageStepper } from '@/components/stage-stepper'
 import { FichaTabs } from '@/components/ficha-tabs'
 import { PainelNegociacao, PainelContato, PainelEmpresa } from '@/components/ficha-paineis'
+import { carregarCamposCustom } from '@/lib/campos'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,6 +30,12 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
   const pessoa = opp.people as Record<string, string>
   const empresa = opp.companies as Record<string, string> | null
   const dono = opp.profiles as Record<string, string> | null
+
+  // campos personalizados (Contato/Empresa) — Empresa só se houver empresa
+  const [contatoCampos, empresaCampos] = await Promise.all([
+    carregarCamposCustom('contact', opp.person_id as string),
+    carregarCamposCustom('company', empresa ? (empresa.id as unknown as string) : null),
+  ])
 
   const valorContrato = Number(opp.expected_value ?? 0) * Number(opp.term_months ?? 12) + Number(opp.setup_value ?? 0)
   const speed = opp.first_contact_at
@@ -122,6 +129,7 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
             oppId={id}
             personId={opp.person_id as string}
             contato={{ full_name: pessoa.full_name, phone: pessoa.phone_primary ?? null, email: pessoa.email_primary ?? null }}
+            campos={contatoCampos}
           />
 
           <PainelEmpresa
@@ -139,6 +147,7 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
                   }
                 : null
             }
+            campos={empresaCampos}
           />
 
           {/* De onde veio — origem rastreada (informativo, distinto da Fonte editável) */}
