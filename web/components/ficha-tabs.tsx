@@ -487,6 +487,14 @@ function Produtos({ oppId, produtos, catalogo }: { oppId: string; produtos: any[
   const [temDesc, setTemDesc] = useState(false)
   const [pendente, start] = useTransition()
 
+  // preço/recorrência sobem sozinhos do catálogo ao escolher o produto (editável)
+  const [unit, setUnit] = useState(0)
+  const [recorrencia, setRecorrencia] = useState('unico')
+  const aoEscolher = (id: string) => {
+    const p = catalogo.find(c => String(c.id) === id)
+    if (p) { setUnit(Number(p.default_price ?? 0)); setRecorrencia(p.recurrence ?? 'unico') }
+  }
+
   const linha = (p: any) => Math.max(0, Number(p.quantity ?? 1) * Number(p.mrr ?? 0) - Number(p.discount ?? 0))
   const total = produtos.reduce((s, p) => s + linha(p), 0)
 
@@ -531,7 +539,7 @@ function Produtos({ oppId, produtos, catalogo }: { oppId: string; produtos: any[
         <form id="form-produto" action={enviar} className="flex flex-col" style={{ gap: 'var(--s-4)' }}>
           <label className="flex flex-col gap-1">
             <span className="campo-label campo-req">Produto ou serviço</span>
-            <select name="product_id" className="field" defaultValue="" required>
+            <select name="product_id" className="field" defaultValue="" required onChange={e => aoEscolher(e.target.value)}>
               <option value="" disabled>Selecione…</option>
               {catalogo.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
@@ -544,11 +552,11 @@ function Produtos({ oppId, produtos, catalogo }: { oppId: string; produtos: any[
             </label>
             <label className="flex flex-col gap-1">
               <span className="campo-label">Valor (R$)</span>
-              <input name="unit" type="number" min={0} step="0.01" defaultValue={0} className="field" />
+              <input name="unit" type="number" min={0} step="0.01" value={unit} onChange={e => setUnit(Number(e.target.value))} className="field" />
             </label>
             <label className="flex flex-col gap-1">
               <span className="campo-label">Recorrência</span>
-              <select name="recurrence" className="field" defaultValue="unico">
+              <select name="recurrence" className="field" value={recorrencia} onChange={e => setRecorrencia(e.target.value)}>
                 <option value="unico">Único</option>
                 <option value="mensal">Mensal</option>
               </select>

@@ -104,7 +104,7 @@ export async function carregarFicha(oppId: string) {
       db.from('notes').select('*').eq('opportunity_id', oppId).order('created_at', { ascending: false }),
       db.from('tasks').select('*').eq('opportunity_id', oppId).order('due_at', { ascending: true, nullsFirst: false }),
       db.from('opportunity_products').select('*, products(name, code, description)').eq('opportunity_id', oppId),
-      db.from('products').select('id, code, name, description').eq('active', true).order('sort_order'),
+      db.from('products').select('id, code, name, description, default_price, recurrence').eq('active', true).order('sort_order'),
       db.from('deal_files').select('*').eq('opportunity_id', oppId).order('created_at', { ascending: false }),
     ])
 

@@ -42,10 +42,11 @@ export function AgendarReuniao({ oppId }: { oppId: string }) {
     <form action={enviar} className="card" style={{ padding: 'var(--s-4)' }}>
       <h3 className="t-h3" style={{ marginBottom: 'var(--s-3)' }}>Agendar reunião</h3>
       <div className="flex flex-wrap gap-2 mb-3">
-        <select name="kind" className="field" defaultValue="diagnostico">
-          <option value="diagnostico">Diagnóstico</option>
-          <option value="fechamento">Fechamento</option>
+        <select name="kind" className="field" defaultValue="entendimento">
+          <option value="entendimento">Entendimento</option>
+          <option value="apresentacao_proposta">Apresentação de Proposta</option>
           <option value="followup">Follow-up</option>
+          <option value="briefing">Briefing</option>
         </select>
         <input name="quando" type="datetime-local" required className="field" />
       </div>

@@ -171,6 +171,33 @@ export async function POST(req: Request) {
     await db.from('notes').insert({ opportunity_id: oppId, body: body.nota.trim(), author_id: null }); applied.push('nota')
   }
 
+  // ---- produtos (catálogo) — liga produtos ao deal por code ou nome ----
+  if (Array.isArray(body.produtos) && body.produtos.length) {
+    const termos = (body.produtos as unknown[]).map(p => String(p).trim().toLowerCase()).filter(Boolean)
+    if (termos.length) {
+      const { data: cat } = await db.from('products').select('id, code, name, default_price, recurrence').eq('active', true)
+      type Prod = { id: number; code: string; name: string; default_price: number | null; recurrence: string | null }
+      const acha = (t: string) => (cat ?? []).find((p: Prod) =>
+        String(p.code).toLowerCase() === t || String(p.name).toLowerCase() === t)
+      const linhas = termos.map(acha).filter((p): p is Prod => !!p).map(p => ({
+        opportunity_id: oppId, product_id: p.id, quantity: 1,
+        mrr: p.default_price ?? 0, recurrence: p.recurrence ?? 'unico', // sobe o preço do catálogo
+      }))
+      if (linhas.length) {
+        await db.from('opportunity_products').upsert(linhas, { onConflict: 'opportunity_id,product_id', ignoreDuplicates: true })
+        // recomputa o valor do deal (mensal vs. único), pra refletir no card/ficha
+        const { data: itens } = await db.from('opportunity_products').select('quantity, mrr, discount, recurrence').eq('opportunity_id', oppId)
+        let mensal = 0, unico = 0
+        for (const it of itens ?? []) {
+          const linha = Math.max(0, Number(it.quantity ?? 1) * Number(it.mrr ?? 0) - Number(it.discount ?? 0))
+          if (it.recurrence === 'mensal') mensal += linha; else unico += linha
+        }
+        await db.from('opportunities').update({ expected_value: mensal, setup_value: unico }).eq('id', oppId)
+        applied.push(`produtos:${linhas.length}`)
+      }
+    }
+  }
+
   // ---- mover etapa (por último; pode fechar o deal) ----
   if (typeof body.etapa === 'string' && body.etapa) {
     const { error } = await db.rpc('fn_move_stage', {

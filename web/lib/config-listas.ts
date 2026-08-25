@@ -72,3 +72,18 @@ export async function removerItem(ent: Entidade, id: string): Promise<Resultado>
   revalidatePath(cfg.rota)
   return { ok: true }
 }
+
+// preço padrão + recorrência do produto (só 'products')
+export async function atualizarPrecoProduto(
+  id: string, dados: { default_price: number | null; recurrence: string },
+): Promise<Resultado> {
+  try { await guard() } catch (e) { return { ok: false, erro: (e as Error).message } }
+  const preco = dados.default_price
+  const { error } = await db.from('products').update({
+    default_price: preco == null || Number.isNaN(preco) ? null : preco,
+    recurrence: dados.recurrence === 'mensal' ? 'mensal' : 'unico',
+  }).eq('id', id)
+  if (error) return { ok: false, erro: error.message }
+  revalidatePath('/configuracoes/produtos')
+  return { ok: true }
+}

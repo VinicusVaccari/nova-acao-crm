@@ -86,9 +86,13 @@ export async function reordenarCard(
 }
 
 const ROTULO_REUNIAO: Record<string, string> = {
+  entendimento: 'Entendimento',
+  apresentacao_proposta: 'Apresentação de Proposta',
+  followup: 'Follow-up',
+  briefing: 'Briefing',
+  // legado (linhas antigas)
   diagnostico: 'Diagnóstico',
   fechamento: 'Fechamento',
-  followup: 'Follow-up',
 }
 const DURACAO_PADRAO_MIN = 60
 

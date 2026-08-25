@@ -57,7 +57,7 @@
 :root {
   color-scheme: light;
 
-  --plane:        #f5f4f9;
+  --plane:        #ffffff;
   --surface:      #ffffff;
   --surface-2:    #f2f0f8;
   --surface-3:    #e9e6f3;
@@ -689,12 +689,12 @@ select.field { cursor: pointer; appearance: none; padding-right: var(--s-8);
 .kanban-scroll:hover::-webkit-scrollbar-thumb { background-color: var(--ink-muted); }
 
 .coluna {
-  width: 340px;
+  width: 290px;
   flex: none;
   display: flex;
   flex-direction: column;
   border-radius: var(--r-lg);
-  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+  background: var(--surface-2);
   border: 1px solid var(--hairline);
   transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease);
 }

@@ -323,7 +323,7 @@ export function Kanban({ cards, catalogo = [] }: { cards: CardPipeline[]; catalo
         </div>
       )}
 
-      {filtros.status === 'perdido' ? (
+      {filtros.status === 'perdido' && filtrados.length > 0 ? (
         <PerdidosView cards={filtrados} />
       ) : (
         <DndContext
@@ -346,7 +346,7 @@ export function Kanban({ cards, catalogo = [] }: { cards: CardPipeline[]; catalo
 
           <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.2,0,0,1)' }}>
             {ativo ? (
-              <div className="deal deal--overlay" style={{ width: 312 }}>
+              <div className="deal deal--overlay" style={{ width: 290 }}>
                 <CardVisual c={ativo} comLink={false} />
               </div>
             ) : null}
