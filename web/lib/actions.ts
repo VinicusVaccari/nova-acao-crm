@@ -241,6 +241,16 @@ export async function marcarReuniao(
   return { ok: true }
 }
 
+/** Exclui um evento da Agenda: remove do Google Calendar e, se estiver
+    vinculado a um deal, marca a reunião como cancelada. */
+export async function excluirEventoAgenda(eventId: string): Promise<Resultado> {
+  if (!eventId) return { ok: false, erro: 'Evento inválido.' }
+  try { await cancelarEvento(eventId) } catch (e) { return { ok: false, erro: (e as Error).message } }
+  await db.from('meetings').update({ status: 'cancelada' }).eq('external_event_id', eventId)
+  revalidatePath('/agenda')
+  return { ok: true }
+}
+
 /* ---- Negócio (deal) ---- */
 export async function atualizarNegocio(
   oppId: string,

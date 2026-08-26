@@ -53,7 +53,7 @@ const CardVisual = memo(function CardVisual({ c, comLink = true }: { c: CardPipe
   const corParado = paradoDias >= 5 ? 'var(--critical)' : paradoDias >= 2 ? 'var(--warning)' : 'var(--ink-muted)'
 
   const acaoAtrasada = c.next_step_due && new Date(c.next_step_due) < new Date()
-  const valor = c.expected_value ? Number(c.expected_value) * (c.term_months ?? 12) : 0
+  const mensal = Number(c.expected_value ?? 0)   // MRR configurado (o valor dos serviços mensais)
   const qual = Math.max(0, Math.min(5, c.qualificacao ?? 0))
 
   const statusInfo = {
@@ -92,7 +92,13 @@ const CardVisual = memo(function CardVisual({ c, comLink = true }: { c: CardPipe
             </svg>
           ))}
         </div>
-        {valor > 0 && <span className="t-body tabular ml-auto" style={{ fontWeight: 600 }}>{brlCurto(valor)}</span>}
+        {mensal > 0 ? (
+          <span className="t-body tabular ml-auto" style={{ fontWeight: 600 }}>
+            {brlCurto(mensal)}<span className="t-2xs muted" style={{ fontWeight: 500, marginLeft: 2 }}>/mês</span>
+          </span>
+        ) : c.contractValue > 0 ? (
+          <span className="t-body tabular ml-auto" style={{ fontWeight: 600 }}>{brlCurto(c.contractValue)}</span>
+        ) : null}
       </div>
 
       {/* tarefa vinculada ou criar tarefa */}
@@ -157,7 +163,7 @@ const SortableCard = memo(function SortableCard({ c }: { c: CardPipeline }) {
 
 const Coluna = memo(function Coluna({ estagio, cards }: { estagio: Estagio; cards: CardPipeline[] }) {
   const { setNodeRef, isOver } = useDroppable({ id: estagio.id })
-  const total = cards.reduce((s, c) => s + Number(c.expected_value ?? 0) * (c.term_months ?? 12), 0)
+  const total = cards.reduce((s, c) => s + Number(c.expected_value ?? 0), 0)
 
   return (
     <div className="coluna" data-alvo={isOver}>
@@ -168,7 +174,7 @@ const Coluna = memo(function Coluna({ estagio, cards }: { estagio: Estagio; card
             {cards.length}
           </span>
         </div>
-        {total > 0 && <div className="t-xs muted tabular" style={{ marginTop: 'var(--s-1)' }}>{brlCurto(total)} em jogo</div>}
+        {total > 0 && <div className="t-xs muted tabular" style={{ marginTop: 'var(--s-1)' }}>{brlCurto(total)}/mês em jogo</div>}
       </div>
 
       <div ref={setNodeRef} className="coluna-cards">

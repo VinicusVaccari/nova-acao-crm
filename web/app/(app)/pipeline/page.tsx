@@ -15,7 +15,7 @@ export default async function Pipeline() {
   const catalogo = (cat.data ?? []) as { id: number; name: string }[]
 
   const abertos = cards.filter(c => c.status === 'andamento')
-  const bruto = abertos.reduce((s, c) => s + c.contractValue, 0)
+  const bruto = abertos.reduce((s, c) => s + Number(c.expected_value ?? 0), 0)
   const semContato = abertos.filter(c => !c.first_contact_at && c.stage === 'novo').length
 
   return (
@@ -34,7 +34,7 @@ export default async function Pipeline() {
         <div>
           <h1 className="t-h1">Pipeline</h1>
           <p className="t-sm muted" style={{ marginTop: 2 }}>
-            {num(abertos.length)} negócios abertos · {brlCurto(bruto)} em jogo
+            {num(abertos.length)} negócios abertos · {brlCurto(bruto)}/mês em jogo
             {semContato > 0 && (
               <>
                 {' · '}

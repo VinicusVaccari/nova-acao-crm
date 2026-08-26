@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, useTransition } from 'react'
 import type { EventoAgenda } from '@/lib/google'
-import { criarReuniaoAgenda, desconectarAgenda } from '@/lib/actions'
+import { criarReuniaoAgenda, desconectarAgenda, excluirEventoAgenda } from '@/lib/actions'
 import { Drawer } from '@/components/drawer'
 
 type NegocioOpcao = { id: string; nome: string }
@@ -358,14 +358,23 @@ const STATUS_ROTULO: Record<string, string> = {
 }
 
 function EventoDrawer({ ev, onClose }: { ev: EventoAgenda | null; onClose: () => void }) {
+  const router = useRouter()
+  const [pend, start] = useTransition()
   if (!ev) return null
+  const excluir = () => {
+    if (!confirm('Excluir este agendamento? Ele sai da agenda do Google e os convidados são avisados.')) return
+    start(async () => { const r = await excluirEventoAgenda(ev.id); if (r.ok) { onClose(); router.refresh() } })
+  }
   const data = ev.inicio
     ? new Date(ev.inicio).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'long', day: '2-digit', month: 'long' })
     : null
   const faixa = ev.diaInteiro ? 'Dia todo' : ev.inicio ? `${horaMin(ev.inicio)}${ev.fim ? ` – ${horaMin(ev.fim)}` : ''}` : null
 
   return (
-    <Drawer titulo={ev.titulo} aberto onClose={onClose}>
+    <Drawer
+      titulo={ev.titulo} aberto onClose={onClose}
+      footer={<button className="btn btn-danger" onClick={excluir} disabled={pend} style={{ width: '100%' }}>{pend ? 'Excluindo…' : 'Excluir agendamento'}</button>}
+    >
       <div className="flex flex-col" style={{ gap: 'var(--s-5)' }}>
         <div>
           {data && <div className="t-body" style={{ textTransform: 'capitalize', fontWeight: 600 }}>{data}</div>}

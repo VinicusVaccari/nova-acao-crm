@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import { salvarCamposCustom } from '@/lib/campos-actions'
 import type { CampoComValor } from '@/lib/campos'
 
@@ -14,6 +15,15 @@ export function CamposCustom({ entityId, campos }: { entityId: string; campos: C
   )
   const [pend, start] = useTransition()
   const [erro, setErro] = useState<string | null>(null)
+  const router = useRouter()
+
+  // Ressincroniza o buffer de edição quando os dados do servidor mudam
+  // (após um refresh), desde que não esteja no meio de uma edição.
+  const assinatura = campos.map(c => `${c.id}:${c.valor ?? ''}`).join('|')
+  useEffect(() => {
+    if (!edit) setVals(Object.fromEntries(campos.map(c => [c.id, c.valor ?? ''])))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assinatura])
 
   if (campos.length === 0) return null
 
@@ -22,7 +32,7 @@ export function CamposCustom({ entityId, campos }: { entityId: string; campos: C
     setErro(null)
     start(async () => {
       const r = await salvarCamposCustom(entityId, campos.map(c => ({ fieldId: c.id, valor: vals[c.id] ?? '' })))
-      if (r.ok) setEdit(false); else setErro(r.erro)
+      if (r.ok) { setEdit(false); router.refresh() } else setErro(r.erro)
     })
   }
 

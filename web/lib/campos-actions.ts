@@ -26,6 +26,6 @@ export async function salvarCamposCustom(
   const { error } = await db.from('custom_field_values').upsert(linhas, { onConflict: 'field_id,entity_id' })
   if (error) return { ok: false, erro: error.message }
 
-  revalidatePath('/lead', 'layout')
+  revalidatePath('/lead/[id]', 'page')
   return { ok: true }
 }
