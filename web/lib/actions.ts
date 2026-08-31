@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { db } from './db'
+import { usuarioAtual } from './supabase/server'
 import { cancelarEvento, criarEvento, desconectar } from './google'
 import { carregarConversas, type Conversa } from './mensagens'
 import { enviarWhatsapp } from './whatsapp'
@@ -82,6 +83,101 @@ export async function reordenarCard(
   if (error) return { ok: false, erro: error.message }
 
   recarregar(oppId)
+  return { ok: true }
+}
+
+/* ---- Status da negociação (perdido/pausado) — MANTÉM a etapa ----
+   Perdido/pausado deixaram de ser etapa (que tirava o card do lugar) e
+   viraram status: a etapa real é preservada, então sabemos ONDE perdemos. */
+
+/** Marca a negociação como PERDIDA sem mexer na etapa. Motivo obrigatório
+    (alimenta o mapa de objeções). */
+export async function marcarPerdido(oppId: string, motivo: string): Promise<Resultado> {
+  if (!motivo) return { ok: false, erro: 'Motivo da perda é obrigatório.' }
+  const { error } = await db.from('opportunities')
+    .update({ lost_at: new Date().toISOString(), lost_reason: motivo, paused_at: null })
+    .eq('id', oppId)
+  if (error) return { ok: false, erro: error.message }
+  recarregar(oppId)
+  return { ok: true }
+}
+
+/** Cria um motivo de perda na lista gerenciada (para o fluxo "escolher ou
+    criar" ao marcar perda). Não duplica; devolve o code. */
+export async function criarMotivoPerda(label: string): Promise<{ ok: true; code: string; label: string } | { ok: false; erro: string }> {
+  const u = await usuarioAtual()
+  if (!u) return { ok: false, erro: 'Sem sessão.' }
+  const l = (label ?? '').trim()
+  if (!l) return { ok: false, erro: 'Informe o motivo.' }
+  const code = l.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40) || 'motivo'
+  const { data: existe } = await db.from('lost_reasons').select('code, label').eq('code', code).maybeSingle()
+  if (existe) return { ok: true, code: existe.code as string, label: existe.label as string }
+  const { error } = await db.from('lost_reasons').insert({ code, label: l, active: true })
+  if (error) return { ok: false, erro: error.message }
+  revalidatePath('/configuracoes/motivos-perda')
+  return { ok: true, code, label: l }
+}
+
+/** Retoma uma negociação perdida ou pausada: volta a Em andamento na mesma
+    etapa em que estava. */
+export async function retomarNegociacao(oppId: string): Promise<Resultado> {
+  const { error } = await db.from('opportunities')
+    .update({ lost_at: null, lost_reason: null, paused_at: null })
+    .eq('id', oppId)
+  if (error) return { ok: false, erro: error.message }
+  recarregar(oppId)
+  return { ok: true }
+}
+
+/** Pausa a negociação (só se não estiver perdida). Mantém a etapa. */
+export async function pausarNegociacao(oppId: string): Promise<Resultado> {
+  const { data: o } = await db.from('opportunities').select('lost_at').eq('id', oppId).maybeSingle()
+  if (o?.lost_at) return { ok: false, erro: 'Negócio perdido não pode ser pausado — retome antes.' }
+  const { error } = await db.from('opportunities')
+    .update({ paused_at: new Date().toISOString() })
+    .eq('id', oppId)
+  if (error) return { ok: false, erro: error.message }
+  recarregar(oppId)
+  return { ok: true }
+}
+
+/** Apaga a negociação de vez. Os filhos (notas, tarefas, reuniões, produtos,
+    histórico, etc.) caem por ON DELETE CASCADE. Irreversível. */
+export async function excluirNegociacao(oppId: string): Promise<Resultado> {
+  const { error } = await db.from('opportunities').delete().eq('id', oppId)
+  if (error) return { ok: false, erro: error.message }
+  recarregar()
+  return { ok: true }
+}
+
+/** Duplica a negociação: copia os campos do deal e os produtos, num card novo
+    "(cópia)" na mesma etapa, Em andamento. */
+export async function duplicarNegociacao(oppId: string): Promise<Resultado> {
+  const { data: o, error } = await db.from('opportunities').select('*').eq('id', oppId).single()
+  if (error || !o) return { ok: false, erro: error?.message ?? 'Negócio não encontrado.' }
+
+  const copia: Record<string, unknown> = { ...o }
+  for (const k of ['id', 'created_at', 'updated_at', 'lost_at', 'lost_reason', 'paused_at',
+                    'first_contact_at', 'next_step', 'next_step_due']) delete copia[k]
+  copia.title = `${(o.title as string) ?? 'Negócio'} (cópia)`
+  copia.stage_since = new Date().toISOString()
+
+  const { data: nova, error: e2 } = await db.from('opportunities').insert(copia).select('id').single()
+  if (e2 || !nova) return { ok: false, erro: e2?.message ?? 'Falha ao duplicar.' }
+
+  // copia os produtos do deal
+  const { data: prods } = await db.from('opportunity_products').select('*').eq('opportunity_id', oppId)
+  if (prods && prods.length) {
+    const linhas = prods.map(p => {
+      const l: Record<string, unknown> = { ...p }
+      delete l.id; delete l.created_at
+      l.opportunity_id = nova.id
+      return l
+    })
+    await db.from('opportunity_products').insert(linhas)
+  }
+  recarregar(nova.id as string)
   return { ok: true }
 }
 

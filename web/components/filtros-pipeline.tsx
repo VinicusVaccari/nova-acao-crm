@@ -5,7 +5,7 @@ import { Drawer } from '@/components/drawer'
 import type { CardPipeline } from '@/lib/estagios'
 
 export type Filtros = {
-  status: '' | 'andamento' | 'vendido' | 'perdido'
+  status: '' | 'andamento' | 'vendido' | 'perdido' | 'pausado'
   criacao: '' | 'hoje' | 'ontem' | '7' | '15' | '30' | '90' | 'custom'
   de?: string
   ate?: string
@@ -52,8 +52,9 @@ function dentroPeriodo(iso: string, f: Filtros): boolean {
 
 export function aplicarFiltros(cards: CardPipeline[], f: Filtros): CardPipeline[] {
   return cards.filter(c => {
-    if (f.status) { if (c.status !== f.status) return false }
-    else if (c.status === 'perdido') return false // por padrão, esconde perdidos do board
+    // sem filtro de status: mostra tudo (perdido/pausado aparecem na coluna
+    // onde ficaram, esmaecidos) — assim vê-se ONDE se perde.
+    if (f.status && c.status !== f.status) return false
     if (f.criacao && !dentroPeriodo(c.created_at, f)) return false
     if (f.qualMin > 0 && (c.qualificacao || 0) < f.qualMin) return false
     if (f.busca.trim()) {
@@ -132,6 +133,7 @@ export function FiltrosDrawer({
           <option value="andamento">Em andamento</option>
           <option value="vendido">Vendido</option>
           <option value="perdido">Perdido</option>
+          <option value="pausado">Pausado</option>
         </select>
       </label>
 

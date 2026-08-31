@@ -2,10 +2,10 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
 import { carregarFicha } from '@/lib/crm'
-import { brl, brlCurto } from '@/lib/format'
 import { Avatar, Selo } from '@/components/ui'
 import { carregarEstagios } from '@/lib/estagios-server'
 import { StageStepper } from '@/components/stage-stepper'
+import { AcoesNegocio } from '@/components/acoes-negocio'
 import { FichaTabs } from '@/components/ficha-tabs'
 import { PainelNegociacao, PainelContato, PainelEmpresa } from '@/components/ficha-paineis'
 import { carregarCamposCustom } from '@/lib/campos'
@@ -14,13 +14,15 @@ export const dynamic = 'force-dynamic'
 
 export default async function Ficha({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const [ficha, motivos, usuariosRes, estagios] = await Promise.all([
+  const [ficha, motivos, usuariosRes, estagios, segRes] = await Promise.all([
     carregarFicha(id),
     db.from('lost_reasons').select('code,label').eq('active', true),
     db.from('profiles').select('id, full_name').eq('is_active', true).order('full_name'),
     carregarEstagios(),
+    db.from('segments').select('name').eq('active', true).order('name'),
   ])
   if (!ficha) notFound()
+  const segmentos = (segRes.data ?? []).map(s => s.name as string)
   const mapaEstagio = Object.fromEntries(estagios.map(e => [e.id, e]))
   const labelEstagio = (s: string) => mapaEstagio[s]?.label ?? s
   const corEstagio = (s: string) => mapaEstagio[s]?.cor ?? '#7c7595'
@@ -44,8 +46,8 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
   const primeiroToque = toques[0] as Record<string, string> | undefined
 
   const stage = opp.stage as string
+  const statusNeg = opp.lost_at ? 'perdido' : opp.paused_at ? 'pausado' : stage === 'ganho' ? 'vendido' : 'andamento'
   const cor = corEstagio(stage)
-  const score = Math.max(0, Math.min(100, Number(opp.score ?? 0)))
   const diasNoEstagio = Math.floor((Date.now() - new Date(opp.stage_since as string).getTime()) / 86400000)
 
   // Valor total do negócio, composto pelos produtos (qtd × valor − desconto)
@@ -82,15 +84,8 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
             </div>
           </div>
 
-          <div className="text-right shrink-0">
-            <div className="t-display hero-ink" style={{ fontSize: 'var(--text-3xl)' }}>{brlCurto(valorContrato)}</div>
-            <div className="t-sm hero-ink-2" style={{ marginTop: 2 }}>
-              {brl(Number(opp.expected_value ?? 0))}/mês × {opp.term_months} meses
-            </div>
-            <div className="flex items-center justify-end" style={{ gap: 'var(--s-2)', marginTop: 'var(--s-3)' }}>
-              <span className="t-xs hero-ink-2">score</span>
-              <span className="t-h2 hero-ink tabular">{score}</span>
-            </div>
+          <div className="shrink-0">
+            <AcoesNegocio oppId={id} status={statusNeg} motivos={motivos.data ?? []} />
           </div>
         </div>
 
@@ -98,7 +93,7 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
 
       {/* stepper em chevron clicável (estilo RD) */}
       <div className="mb-4">
-        <StageStepper oppId={id} atual={stage} dias={diasNoEstagio} motivos={motivos.data ?? []} />
+        <StageStepper oppId={id} atual={stage} dias={diasNoEstagio} perdido={!!opp.lost_at} pausado={!!opp.paused_at} />
       </div>
 
       {/* ---------- Corpo: esquerda (info) + direita (abas) ---------- */}
@@ -148,6 +143,7 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
                 : null
             }
             campos={empresaCampos}
+            segmentos={segmentos}
           />
 
           {/* De onde veio — origem rastreada (informativo, distinto da Fonte editável) */}

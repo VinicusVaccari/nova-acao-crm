@@ -12,7 +12,7 @@ export async function carregarPipeline(): Promise<CardPipeline[]> {
     .select(`
       id, stage, stage_since, board_rank, expected_value, term_months, setup_value, score,
       qualificacao, title, product, source_channel, next_step, next_step_due,
-      created_at, first_contact_at, lost_reason,
+      created_at, first_contact_at, lost_reason, lost_at, paused_at,
       people:person_id ( full_name ),
       companies:company_id ( trade_name ),
       profiles:owner_id ( full_name )
@@ -59,7 +59,9 @@ export async function carregarPipeline(): Promise<CardPipeline[]> {
   return (data ?? []).map(o => {
     const r = o as Bruto
     const stage = o.stage as string
-    const status = stage === 'ganho' ? 'vendido' : stage === 'perdido' ? 'perdido' : 'andamento'
+    // Status é desacoplado da etapa: perdido/pausado MANTÊM a etapa real
+    // (para sabermos onde perdemos). A etapa 'ganho' segue marcando vendido.
+    const status = o.lost_at ? 'perdido' : o.paused_at ? 'pausado' : stage === 'ganho' ? 'vendido' : 'andamento'
     const prod = porProduto.get(o.id as string) ?? { ids: [], nomes: [] }
     return {
       ...(o as unknown as CardPipeline),

@@ -9,6 +9,7 @@ import {
 } from '@/lib/actions'
 import { Avatar } from '@/components/ui'
 import { CamposCustom } from '@/components/campos-custom'
+import { SegmentoSelect } from '@/components/segmento-select'
 import type { CampoComValor } from '@/lib/campos'
 import { brl, brlCurto, dur, num } from '@/lib/format'
 
@@ -317,11 +318,13 @@ export function PainelEmpresa({
   personId,
   empresa,
   campos = [],
+  segmentos = [],
 }: {
   oppId: string
   personId: string
   empresa: { id: string; trade_name: string; cnpj: string | null; address: string | null; website: string | null; segment: string | null } | null
   campos?: CampoComValor[]
+  segmentos?: string[]
 }) {
   const [edit, setEdit] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -370,7 +373,10 @@ export function PainelEmpresa({
           <CampoEdit nome="cnpj" rotulo="CNPJ" valor={empresa?.cnpj ?? ''} placeholder="00.000.000/0001-00" />
           <CampoEdit nome="address" rotulo="Endereço" valor={empresa?.address ?? ''} />
           <CampoEdit nome="website" rotulo="Site" valor={empresa?.website ?? ''} placeholder="empresa.com.br" />
-          <CampoEdit nome="segment" rotulo="Segmento" valor={empresa?.segment ?? ''} />
+          <label className="flex flex-col gap-1">
+            <span className="campo-label">Segmento</span>
+            <SegmentoSelect name="segment" segmentos={segmentos} defaultValue={empresa?.segment ?? ''} />
+          </label>
           {erro && <p className="t-sm" style={{ color: 'var(--critical)' }}>{erro}</p>}
           <div className="flex flex-wrap gap-2" style={{ marginTop: 'var(--s-1)' }}>
             <button className="btn btn-primary btn-sm" disabled={pend}>{pend ? 'Salvando…' : 'Salvar'}</button>
@@ -385,7 +391,7 @@ export function PainelEmpresa({
             <LinhaLeitura rotulo="CNPJ" valor={empresa.cnpj} />
             <LinhaLeitura rotulo="Endereço" valor={empresa.address} />
             <LinhaSite site={empresa.website} />
-            {empresa.segment && <LinhaLeitura rotulo="Segmento" valor={empresa.segment} />}
+            <LinhaLeitura rotulo="Segmento" valor={empresa.segment} />
           </div>
         )
       )}

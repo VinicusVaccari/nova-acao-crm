@@ -4,42 +4,39 @@ import { useState, useTransition } from 'react'
 import { moverEstagio } from '@/lib/actions'
 import { useEstagiosBoard } from '@/components/estagios-context'
 
-/* Stepper em chevron, estilo RD: cada etapa é um segmento clicável.
-   Clicar move o deal (otimista). Perda/nutrição ficam ao lado, com
-   a lista fechada de motivos para a perda. */
+/* Stepper em chevron, estilo RD: cada etapa é um segmento clicável (move o
+   deal, otimista). Perdido/pausado mantêm a etapa — o chevron segue mostrando
+   onde está, esmaecido. As ações (marcar perda/venda, retomar, pausar, etc.)
+   vivem no menu do banner (ver AcoesNegocio). */
 export function StageStepper({
   oppId,
   atual,
   dias,
-  motivos,
+  perdido = false,
+  pausado = false,
 }: {
   oppId: string
   atual: string
   dias: number
-  motivos: { code: string; label: string }[]
+  perdido?: boolean
+  pausado?: boolean
 }) {
   const [otim, setOtim] = useState(atual)
   const [erro, setErro] = useState<string | null>(null)
-  const [perdendo, setPerdendo] = useState(false)
   const [pendente, start] = useTransition()
 
   const ESTAGIOS = useEstagiosBoard()
   const idx = ESTAGIOS.findIndex(e => e.id === otim)
-  const encerrado = otim === 'ganho' || otim === 'perdido'
+  const fechado = perdido || pausado
 
-  function mover(stage: string, motivo?: string) {
+  function mover(stage: string) {
     if (stage === otim) return
     setErro(null)
     const prev = otim
     setOtim(stage)
     start(async () => {
-      const r = await moverEstagio(oppId, stage, motivo)
-      if (!r.ok) {
-        setOtim(prev)
-        setErro(r.erro)
-      } else {
-        setPerdendo(false)
-      }
+      const r = await moverEstagio(oppId, stage)
+      if (!r.ok) { setOtim(prev); setErro(r.erro) }
     })
   }
 
@@ -53,9 +50,9 @@ export function StageStepper({
               key={e.id}
               className="stage-seg"
               data-estado={estado}
-              style={{ ['--sc' as string]: e.cor }}
+              style={{ ['--sc' as string]: e.cor, opacity: fechado ? 0.55 : 1 }}
               onClick={() => mover(e.id)}
-              disabled={pendente}
+              disabled={pendente || fechado}
               title={e.label}
             >
               <span>{e.curto}{estado === 'atual' ? ` · ${dias}d` : ''}</span>
@@ -63,36 +60,7 @@ export function StageStepper({
           )
         })}
       </div>
-
-      <div className="flex flex-wrap items-center gap-2" style={{ marginTop: 'var(--s-3)' }}>
-        <span className="t-sm muted" style={{ marginRight: 'auto' }}>
-          {encerrado
-            ? otim === 'ganho' ? 'Negócio ganho' : 'Negócio perdido'
-            : `Etapa ${idx + 1} de ${ESTAGIOS.length} · clique para avançar`}
-        </span>
-        {!encerrado && (
-          <>
-            <button className="btn btn-ghost btn-sm" onClick={() => mover('nutricao')} disabled={pendente}>Nutrição</button>
-            <button className="btn btn-danger btn-sm" onClick={() => setPerdendo(v => !v)} disabled={pendente}>Marcar perdido</button>
-          </>
-        )}
-        {erro && <span className="t-sm" style={{ color: 'var(--critical)', width: '100%' }}>{erro}</span>}
-      </div>
-
-      {perdendo && (
-        <div style={{ marginTop: 'var(--s-3)', paddingTop: 'var(--s-3)', borderTop: '1px solid var(--hairline)' }}>
-          <p className="t-sm muted" style={{ marginBottom: 'var(--s-2)' }}>
-            O motivo é obrigatório e alimenta o mapa de objeções.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {motivos.map(m => (
-              <button key={m.code} className="btn btn-ghost btn-sm" onClick={() => mover('perdido', m.code)} disabled={pendente}>
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {erro && <p className="t-sm" style={{ color: 'var(--critical)', marginTop: 'var(--s-2)' }}>{erro}</p>}
     </div>
   )
 }

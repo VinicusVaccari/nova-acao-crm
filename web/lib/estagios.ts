@@ -43,7 +43,7 @@ export const corEstagio = (id: string): string => POR_ID[id]?.cor ?? '#7c7595'
 export const labelEstagio = (id: string): string =>
   POR_ID[id]?.label ?? (id === 'perdido' ? 'Perdido' : id === 'nutricao' ? 'Nutrição' : id)
 
-export type StatusNeg = 'andamento' | 'vendido' | 'perdido'
+export type StatusNeg = 'andamento' | 'vendido' | 'perdido' | 'pausado'
 
 export type CardPipeline = {
   id: string
@@ -64,6 +64,8 @@ export type CardPipeline = {
   first_contact_at: string | null
   ultima_interacao: string | null
   lost_reason: string | null
+  lost_at: string | null
+  paused_at: string | null
   contractValue: number
   produtoIds: number[]
   produtoNomes: string[]

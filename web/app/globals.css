@@ -97,9 +97,9 @@
   --serious:  #d97742;
   --critical: #cf3b4e;
 
-  --shadow-sm: 0 1px 2px rgba(36, 26, 78, 0.06);
-  --shadow-md: 0 4px 14px rgba(36, 26, 78, 0.08);
-  --shadow-lg: 0 12px 32px rgba(36, 26, 78, 0.14);
+  --shadow-sm: 0 1px 2px rgba(36, 26, 78, 0.08), 0 4px 12px rgba(36, 26, 78, 0.07);
+  --shadow-md: 0 2px 6px rgba(36, 26, 78, 0.08), 0 8px 22px rgba(36, 26, 78, 0.10);
+  --shadow-lg: 0 12px 32px rgba(36, 26, 78, 0.16);
 }
 
 /* -----------------------------------------------------------------
@@ -595,7 +595,7 @@ select.field { cursor: pointer; appearance: none; padding-right: var(--s-8);
   align-items: stretch;
   width: 100%;
   overflow-x: auto;
-  gap: 3px;               /* vão fino entre setas — cada chevron aparece */
+  gap: 1px;               /* vão fino entre setas — cada chevron aparece */
   padding-bottom: 2px;
 }
 .stage-seg {
@@ -688,8 +688,10 @@ select.field { cursor: pointer; appearance: none; padding-right: var(--s-8);
 }
 .kanban-scroll:hover::-webkit-scrollbar-thumb { background-color: var(--ink-muted); }
 
+.acao-item:hover { background: var(--surface-2); }
+
 .coluna {
-  width: 290px;
+  width: 330px;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -745,7 +747,9 @@ select.field { cursor: pointer; appearance: none; padding-right: var(--s-8);
   padding: 0 var(--s-3);
   border-bottom: 1px solid var(--hairline);
   overflow-x: auto;
+  scrollbar-width: none;            /* Firefox — some a barra */
 }
+.tabbar::-webkit-scrollbar { display: none; }  /* Chrome/Safari — some a barra */
 .tab {
   position: relative;
   display: flex;

@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { IconeAgenda, IconeComercial, IconeHoje, IconeMensagens, IconePipeline } from '@/components/icones'
+import { IconeAgenda, IconeComercial, IconeContatos, IconeEmpresas, IconeHoje, IconeMensagens, IconePipeline } from '@/components/icones'
 
 type Item = {
   href: string
@@ -15,6 +15,8 @@ const GRUPOS: Item[][] = [
   [
     { href: '/', label: 'Hoje', Icone: IconeHoje },
     { href: '/pipeline', label: 'Pipeline', Icone: IconePipeline },
+    { href: '/empresas', label: 'Empresas', Icone: IconeEmpresas },
+    { href: '/contatos', label: 'Contatos', Icone: IconeContatos },
     { href: '/agenda', label: 'Agenda', Icone: IconeAgenda },
     { href: '/mensagens', label: 'Mensagens', Icone: IconeMensagens },
   ],

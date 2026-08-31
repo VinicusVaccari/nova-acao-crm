@@ -52,6 +52,21 @@ export const IconePipeline = (p: P) => (
   </svg>
 )
 
+export const IconeContatos = (p: P) => (
+  <svg {...base} {...p}>
+    <circle cx="10" cy="6.5" r="3" />
+    <path d="M4 16.5c0-2.8 2.7-4.5 6-4.5s6 1.7 6 4.5" />
+  </svg>
+)
+
+export const IconeEmpresas = (p: P) => (
+  <svg {...base} {...p}>
+    <rect x="3" y="3" width="9" height="14" rx="1.5" />
+    <path d="M12 8h4a1.5 1.5 0 0 1 1.5 1.5V17H12" />
+    <path d="M6 6.5h3M6 9.5h3M6 12.5h3M14.5 11h1M14.5 14h1" />
+  </svg>
+)
+
 export const IconeComercial = (p: P) => (
   <svg {...base} {...p}>
     <path d="M3 16.5V9M7.7 16.5V4.5M12.3 16.5v-5M17 16.5V7" />

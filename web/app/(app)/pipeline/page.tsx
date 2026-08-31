@@ -30,7 +30,7 @@ export default async function Pipeline() {
         overflow: 'hidden',
       }}
     >
-      <div className="flex flex-wrap items-end justify-between gap-4 shrink-0" style={{ padding: 'var(--s-6) var(--s-6) var(--s-4)' }}>
+      <div className="flex flex-wrap items-end justify-between gap-4 shrink-0" style={{ padding: 'var(--s-8) var(--s-6) var(--s-4)' }}>
         <div>
           <h1 className="t-h1">Pipeline</h1>
           <p className="t-sm muted" style={{ marginTop: 2 }}>

@@ -20,7 +20,6 @@ import { CSS } from '@dnd-kit/utilities'
 import { reordenarCard } from '@/lib/actions'
 import { type CardPipeline, type Estagio } from '@/lib/estagios'
 import { useEstagiosBoard } from '@/components/estagios-context'
-import { Avatar } from '@/components/ui'
 import { FiltrosDrawer, aplicarFiltros, contarFiltros, filtroVazio, type Filtros } from '@/components/filtros-pipeline'
 import { brlCurto } from '@/lib/format'
 
@@ -60,31 +59,38 @@ const CardVisual = memo(function CardVisual({ c, comLink = true }: { c: CardPipe
     andamento: { label: 'Em andamento', cor: 'var(--brand-teal)' },
     vendido: { label: 'Vendido', cor: 'var(--good)' },
     perdido: { label: 'Perdido', cor: 'var(--critical)' },
+    pausado: { label: 'Pausado', cor: 'var(--ink-muted)' },
   }[c.status]
 
   const temTarefa = !!c.next_step
 
   const corpo = (
     <>
-      {/* status */}
-      <div className="flex items-center gap-2" style={{ marginBottom: 'var(--s-2)' }}>
+      {/* status — a frase nunca corta ("Em andamento" inteiro); se não couber com o
+          chip "Parado há", o chip desce para a linha de baixo (o card cresce o necessário) */}
+      <div className="flex items-center gap-2" style={{ marginBottom: 'var(--s-2)', minHeight: 24 }}>
         <span aria-hidden style={{ width: 12, height: 12, borderRadius: 3, background: statusInfo.cor, flex: 'none' }} />
-        <span className="t-sm" style={{ fontWeight: 600, color: 'var(--ink-2)' }}>{statusInfo.label}</span>
-        {mostrarParado && (
-          <span className="chip" style={{ marginLeft: 'auto', background: `color-mix(in srgb, ${corParado} 14%, transparent)`, color: corParado }}>
-            <span aria-hidden className="chip-dot" style={{ background: corParado }} />
-            Parado há {paradoDias}d
-          </span>
-        )}
+        <span className="t-sm" style={{ fontWeight: 600, color: 'var(--ink-2)', whiteSpace: 'nowrap' }}>{statusInfo.label}</span>
+        {/* o chip é reservado em TODOS os cards (invisível quando não está parado)
+            para a linha de status ter exatamente a mesma altura em todos */}
+        <span
+          className="chip"
+          aria-hidden={!mostrarParado}
+          style={{ marginLeft: 'auto', flex: 'none', whiteSpace: 'nowrap', visibility: mostrarParado ? undefined : 'hidden', background: `color-mix(in srgb, ${corParado} 14%, transparent)`, color: corParado }}
+        >
+          <span aria-hidden className="chip-dot" style={{ background: corParado }} />
+          Parado há {paradoDias}d
+        </span>
       </div>
 
       <div className="min-w-0">
         <div className="t-h2 truncate" style={{ fontSize: 'var(--text-md)', lineHeight: 1.3 }}>{c.nome}</div>
-        {c.empresa && <div className="t-sm muted truncate">{c.empresa}</div>}
+        {/* sempre reserva a linha da empresa para o card ter a MESMA altura com ou sem empresa */}
+        <div className="t-sm muted truncate" aria-hidden={!c.empresa}>{c.empresa || ' '}</div>
       </div>
 
-      {/* estrelas + valor */}
-      <div className="flex items-center gap-3" style={{ marginTop: 'var(--s-2)' }}>
+      {/* estrelas + valor — altura fixa para o card não mudar de tamanho quando há/não há valor */}
+      <div className="flex items-center gap-3" style={{ marginTop: 'var(--s-2)', minHeight: 26 }}>
         <div className="flex items-center gap-0.5">
           {[1, 2, 3, 4, 5].map(n => (
             <svg key={n} width="15" height="15" viewBox="0 0 20 20" fill={n <= qual ? 'var(--accent)' : 'none'} stroke={n <= qual ? 'var(--accent)' : 'var(--hairline-2)'} strokeWidth="1.4" strokeLinejoin="round">
@@ -139,19 +145,28 @@ const CardVisual = memo(function CardVisual({ c, comLink = true }: { c: CardPipe
 
 /* ---------------- Card ordenável ---------------- */
 
+const ACCENT: Record<string, string> = {
+  perdido: 'var(--critical)', pausado: 'var(--ink-muted)', vendido: 'var(--good)', andamento: '',
+}
+
 const SortableCard = memo(function SortableCard({ c }: { c: CardPipeline }) {
-  const { setNodeRef, listeners, attributes, transform, transition, isDragging } = useSortable({ id: c.id })
+  const arrastavel = c.status === 'andamento'
+  const fechado = c.status === 'perdido' || c.status === 'pausado'
+  const { setNodeRef, listeners, attributes, transform, transition, isDragging } = useSortable({ id: c.id, disabled: !arrastavel })
+  const cor = ACCENT[c.status]
   return (
     <div
       ref={setNodeRef}
-      {...listeners}
+      {...(arrastavel ? listeners : {})}
       {...attributes}
       className="deal"
       style={{
+        ...(cor ? { ['--deal-cor' as string]: cor } : {}),
         transform: CSS.Translate.toString(transform),
         transition,
-        opacity: isDragging ? 0 : 1, // fica invisível; o overlay mostra o card e a lacuna abre aqui
-        touchAction: 'none',
+        // fechados (perdido/pausado) aparecem na coluna, porém esmaecidos
+        opacity: isDragging ? 0 : fechado ? 0.62 : 1,
+        touchAction: arrastavel ? 'none' : 'auto',
       }}
     >
       <CardVisual c={c} />
@@ -174,7 +189,8 @@ const Coluna = memo(function Coluna({ estagio, cards }: { estagio: Estagio; card
             {cards.length}
           </span>
         </div>
-        {total > 0 && <div className="t-xs muted tabular" style={{ marginTop: 'var(--s-1)' }}>{brlCurto(total)}/mês em jogo</div>}
+        {/* linha sempre reservada para todos os cabeçalhos terem a MESMA altura, com ou sem valor */}
+        <div className="t-xs muted tabular" style={{ marginTop: 'var(--s-1)' }} aria-hidden={total <= 0}>{total > 0 ? `${brlCurto(total)}/mês em jogo` : ' '}</div>
       </div>
 
       <div ref={setNodeRef} className="coluna-cards">
@@ -329,36 +345,32 @@ export function Kanban({ cards, catalogo = [] }: { cards: CardPipeline[]; catalo
         </div>
       )}
 
-      {filtros.status === 'perdido' && filtrados.length > 0 ? (
-        <PerdidosView cards={filtrados} />
-      ) : (
-        <DndContext
-          id="kanban-pipeline"
-          sensors={sensors}
-          collisionDetection={closestCorners}
-          measuring={{ droppable: { strategy: MeasuringStrategy.BeforeDragging } }}
-          onDragStart={onStart}
-          onDragOver={onOver}
-          onDragEnd={onEnd}
-          onDragCancel={() => { setAtivo(null); arrastando.current = false; setCols(agrupar(filtrados, ordemIds)) }}
-        >
-          <div className="kanban-scroll overflow-x-auto flex-1 min-h-0">
-            <div className="flex" style={{ gap: 'var(--s-4)', minWidth: 'max-content', height: '100%', padding: '0 var(--s-6)' }}>
-              {board.map(e => (
-                <Coluna key={e.id} estagio={e} cards={cols[e.id] ?? []} />
-              ))}
-            </div>
+      <DndContext
+        id="kanban-pipeline"
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        measuring={{ droppable: { strategy: MeasuringStrategy.BeforeDragging } }}
+        onDragStart={onStart}
+        onDragOver={onOver}
+        onDragEnd={onEnd}
+        onDragCancel={() => { setAtivo(null); arrastando.current = false; setCols(agrupar(filtrados, ordemIds)) }}
+      >
+        <div className="kanban-scroll overflow-x-auto flex-1 min-h-0">
+          <div className="flex" style={{ gap: 'var(--s-4)', minWidth: 'max-content', height: '100%', padding: '0 var(--s-6)' }}>
+            {board.map(e => (
+              <Coluna key={e.id} estagio={e} cards={cols[e.id] ?? []} />
+            ))}
           </div>
+        </div>
 
-          <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.2,0,0,1)' }}>
-            {ativo ? (
-              <div className="deal deal--overlay" style={{ width: 290 }}>
-                <CardVisual c={ativo} comLink={false} />
-              </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
-      )}
+        <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.2,0,0,1)' }}>
+          {ativo ? (
+            <div className="deal deal--overlay" style={{ width: 330 }}>
+              <CardVisual c={ativo} comLink={false} />
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
 
       <FiltrosDrawer
         aberto={filtroAberto}
@@ -372,34 +384,3 @@ export function Kanban({ cards, catalogo = [] }: { cards: CardPipeline[]; catalo
   )
 }
 
-/* ---------------- Visão de perdidos (fora do funil) ---------------- */
-
-function PerdidosView({ cards }: { cards: CardPipeline[] }) {
-  if (!cards.length) {
-    return <p className="t-sm muted" style={{ padding: 'var(--s-6)' }}>Nenhum negócio perdido com esses filtros.</p>
-  }
-  return (
-    <div className="overflow-y-auto flex-1 min-h-0">
-      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
-        {cards.map(c => (
-          <Link key={c.id} href={`/lead/${c.id}`} className="deal" style={{ ['--deal-cor' as string]: 'var(--critical)', cursor: 'pointer' }}>
-            <div className="flex items-start gap-3">
-              <Avatar nome={c.nome} tamanho={38} />
-              <div className="min-w-0 flex-1">
-                <div className="t-h2 truncate" style={{ fontSize: 'var(--text-md)' }}>{c.nome}</div>
-                {c.empresa && <div className="t-sm muted truncate">{c.empresa}</div>}
-              </div>
-            </div>
-            <div className="flex items-center justify-between" style={{ marginTop: 'var(--s-3)' }}>
-              <span className="chip" style={{ background: 'color-mix(in srgb, var(--critical) 14%, transparent)', color: 'var(--critical)' }}>
-                <span aria-hidden className="chip-dot" style={{ background: 'var(--critical)' }} />
-                {c.lost_reason ?? 'perdido'}
-              </span>
-              {c.contractValue > 0 && <span className="t-sm tabular muted">{brlCurto(c.contractValue)}</span>}
-            </div>
-          </Link>
-        ))}
-      </div>
-    </div>
-  )
-}
