@@ -10,3 +10,6 @@ dist/
 
 # docs (planejamento/prompts) — fora do versionamento
 docs/
+
+# documentação Markdown mantida somente no ambiente local
+*.md
