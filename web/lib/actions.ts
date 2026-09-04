@@ -92,12 +92,27 @@ export async function reordenarCard(
 
 /** Marca a negociação como PERDIDA sem mexer na etapa. Motivo obrigatório
     (alimenta o mapa de objeções). */
-export async function marcarPerdido(oppId: string, motivo: string): Promise<Resultado> {
+export async function marcarPerdido(oppId: string, motivo: string, actorType: 'user' | 'ai' = 'user'): Promise<Resultado> {
   if (!motivo) return { ok: false, erro: 'Motivo da perda é obrigatório.' }
+  const agora = new Date().toISOString()
+  const { data: o } = await db.from('opportunities').select('stage').eq('id', oppId).maybeSingle()
   const { error } = await db.from('opportunities')
-    .update({ lost_at: new Date().toISOString(), lost_reason: motivo, paused_at: null })
+    .update({ lost_at: agora, lost_reason: motivo, paused_at: null })
     .eq('id', oppId)
   if (error) return { ok: false, erro: error.message }
+
+  // registra na timeline — o Histórico lê stage_history e mostra "marcou como
+  // Perdido (motivo)". Mantém a etapa real; esta linha é só o log da perda.
+  const { data: mr } = await db.from('lost_reasons').select('label').eq('code', motivo).maybeSingle()
+  await db.from('stage_history').insert({
+    opportunity_id: oppId,
+    from_stage: (o?.stage as string) ?? null,
+    to_stage: 'perdido',
+    reason: mr?.label ?? motivo,
+    actor_type: actorType,
+    changed_at: agora,
+  })
+
   recarregar(oppId)
   return { ok: true }
 }
@@ -126,8 +141,17 @@ export async function retomarNegociacao(oppId: string): Promise<Resultado> {
     .update({ lost_at: null, lost_reason: null, paused_at: null })
     .eq('id', oppId)
   if (error) return { ok: false, erro: error.message }
+  await logSistema(oppId, 'reabriu a negociação')
   recarregar(oppId)
   return { ok: true }
+}
+
+/** Registra um evento de sistema na timeline (aparece no Histórico). */
+async function logSistema(oppId: string, texto: string) {
+  await db.from('activities').insert({
+    opportunity_id: oppId, kind: 'sistema', direction: 'outbound',
+    occurred_at: new Date().toISOString(), is_automated: false, body: texto, meta: {},
+  })
 }
 
 /** Pausa a negociação (só se não estiver perdida). Mantém a etapa. */
@@ -138,6 +162,7 @@ export async function pausarNegociacao(oppId: string): Promise<Resultado> {
     .update({ paused_at: new Date().toISOString() })
     .eq('id', oppId)
   if (error) return { ok: false, erro: error.message }
+  await logSistema(oppId, 'pausou a negociação')
   recarregar(oppId)
   return { ok: true }
 }
@@ -223,7 +248,7 @@ async function inserirReuniaoNoDeal(
 
   if (p.moverEstagio) {
     const { data: opp } = await db.from('opportunities').select('stage').eq('id', oppId).single()
-    if (opp && ['novo', 'em_atendimento', 'qualificado'].includes(opp.stage as string)) {
+    if (opp && ['novo', 'primeiro_contato', 'qualificado'].includes(opp.stage as string)) {
       await db.rpc('fn_move_stage', { p_opportunity_id: oppId, p_to_stage: 'reuniao_agendada', p_actor: null, p_actor_type: 'user', p_reason: null, p_meta: {} })
     }
   }
@@ -326,7 +351,7 @@ export async function marcarReuniao(
   if (status === 'realizada') {
     await db.rpc('fn_move_stage', {
       p_opportunity_id: m.opportunity_id,
-      p_to_stage: 'diagnostico_realizado',
+      p_to_stage: 'apresentacao_institucional',
       p_actor: null,
       p_actor_type: 'user',
       p_reason: null,

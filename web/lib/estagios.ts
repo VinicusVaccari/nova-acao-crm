@@ -7,15 +7,16 @@
    passa pelo roxo, chega ao âmbar (proposta/negociação) e fecha no verde.
    Tons médios, legíveis nos dois temas sobre superfície clara e escura. */
 export const ESTAGIOS = [
-  { id: 'novo',                  label: 'Novo',               curto: 'Novo',        cor: '#7c7595' },
-  { id: 'em_atendimento',        label: 'Em atendimento',     curto: 'Atendimento', cor: '#01aaaf' },
-  { id: 'qualificado',           label: 'Qualificado',        curto: 'Qualificado', cor: '#0e8ecf' },
-  { id: 'reuniao_agendada',      label: 'Reunião agendada',   curto: 'Agendada',    cor: '#6366f1' },
-  { id: 'diagnostico_realizado', label: 'Diagnóstico feito',  curto: 'Diagnóstico', cor: '#8b5cf6' },
-  { id: 'fechamento_agendado',   label: 'Fechamento marcado', curto: 'Fechamento',  cor: '#a855f7' },
-  { id: 'proposta_enviada',      label: 'Proposta enviada',   curto: 'Proposta',    cor: '#fdb92e' },
-  { id: 'negociacao',            label: 'Negociação',         curto: 'Negociação',  cor: '#f97316' },
-  { id: 'ganho',                 label: 'Ganho',              curto: 'Ganho',       cor: '#0d8f52' },
+  { id: 'novo',                       label: 'Lead Aguardando Contato',    curto: 'Aguardando',   cor: '#7c7595' },
+  { id: 'primeiro_contato',           label: 'Primeiro Contato Feito',     curto: 'Contato',      cor: '#01aaaf' },
+  { id: 'qualificado',                label: 'Qualificado',                curto: 'Qualificado',  cor: '#0e8ecf' },
+  { id: 'desqualificado',             label: 'Desqualificado',             curto: 'Desqualif.',   cor: '#e0685f' },
+  { id: 'reuniao_agendada',           label: 'Reunião agendada',           curto: 'Reunião',      cor: '#6366f1' },
+  { id: 'apresentacao_institucional', label: 'Apresentação Institucional', curto: 'Apres. Inst.', cor: '#8b5cf6' },
+  { id: 'envio_proposta',             label: 'Envio da Proposta',          curto: 'Proposta',     cor: '#a855f7' },
+  { id: 'apresentacao_proposta',      label: 'Apresentação da Proposta',   curto: 'Apres. Prop.', cor: '#fdb92e' },
+  { id: 'negociacao',                 label: 'Negociação',                 curto: 'Negociação',   cor: '#f97316' },
+  { id: 'ganho',                      label: 'Venda',                      curto: 'Venda',        cor: '#0d8f52' },
 ] as const
 
 export type EstagioId = (typeof ESTAGIOS)[number]['id']

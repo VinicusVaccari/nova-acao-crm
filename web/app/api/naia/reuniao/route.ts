@@ -46,7 +46,7 @@ async function resolverOpp(opportunityId?: string, phone?: string): Promise<stri
     .in('kind', ['phone', 'wa_id']).in('value', [tel, digits]).limit(1).maybeSingle()
   if (ident?.person_id) {
     const { data: opp } = await db.from('opportunities').select('id')
-      .eq('person_id', ident.person_id).not('stage', 'in', '(ganho,perdido)')
+      .eq('person_id', ident.person_id).is('lost_at', null).neq('stage', 'ganho')
       .order('created_at', { ascending: false }).limit(1).maybeSingle()
     if (opp) return opp.id as string
   }
@@ -120,7 +120,7 @@ export async function POST(req: Request) {
   // move o estágio para "reuniao_agendada" se ainda estiver no início
   if (moverEtapa) {
     const { data: o } = await db.from('opportunities').select('stage').eq('id', oppId).maybeSingle()
-    if (o && ['novo', 'em_atendimento', 'qualificado'].includes(o.stage as string)) {
+    if (o && ['novo', 'primeiro_contato', 'qualificado'].includes(o.stage as string)) {
       await db.rpc('fn_move_stage', { p_opportunity_id: oppId, p_to_stage: 'reuniao_agendada', p_actor: null, p_actor_type: 'ai', p_reason: null, p_meta: { via: 'naia' } })
     }
   }

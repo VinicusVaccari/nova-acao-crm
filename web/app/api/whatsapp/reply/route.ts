@@ -45,7 +45,7 @@ export async function POST(req: Request) {
     if (ident?.person_id) {
       const { data: opp } = await db
         .from('opportunities').select('id')
-        .eq('person_id', ident.person_id).not('stage', 'in', '(ganho,perdido)')
+        .eq('person_id', ident.person_id).is('lost_at', null).neq('stage', 'ganho')
         .order('created_at', { ascending: false }).limit(1).maybeSingle()
       oppId = opp?.id as string | undefined
     }

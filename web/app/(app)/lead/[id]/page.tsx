@@ -43,7 +43,14 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
   const speed = opp.first_contact_at
     ? (new Date(opp.first_contact_at).getTime() - new Date(opp.created_at).getTime()) / 60000
     : null
-  const primeiroToque = toques[0] as Record<string, string> | undefined
+  // O contato pode ter touchpoints de negócios anteriores. A ficha deve
+  // mostrar o toque atribuído a ESTE negócio; em um retorno pelo formulário,
+  // last_touchpoint_id aponta justamente para as UTMs recém-enviadas.
+  const toqueAtribuido = (
+    toques.find(t => String(t.id) === String(opp.last_touchpoint_id))
+    ?? toques.find(t => String(t.id) === String(opp.first_touchpoint_id))
+    ?? toques.at(-1)
+  ) as Record<string, string> | undefined
 
   const stage = opp.stage as string
   const statusNeg = opp.lost_at ? 'perdido' : opp.paused_at ? 'pausado' : stage === 'ganho' ? 'vendido' : 'andamento'
@@ -149,7 +156,7 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
           {/* De onde veio — origem rastreada (informativo, distinto da Fonte editável) */}
           <div className="card" style={{ padding: 'var(--s-5)' }}>
             <h3 className="t-h2" style={{ marginBottom: 'var(--s-1)' }}>De onde veio</h3>
-            {primeiroToque ? (
+            {toqueAtribuido ? (
               <>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-3" style={{ marginTop: 'var(--s-3)' }}>
                   {([
@@ -162,14 +169,14 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
                   ] as const).map(([rotulo, campo]) => (
                     <div key={campo} className="min-w-0">
                       <div className="t-xs muted">{rotulo}</div>
-                      <div className="t-sm" style={{ fontWeight: 600, wordBreak: 'break-word' }}>{primeiroToque[campo] || '—'}</div>
+                      <div className="t-sm" style={{ fontWeight: 600, wordBreak: 'break-word' }}>{toqueAtribuido[campo] || '—'}</div>
                     </div>
                   ))}
                 </div>
                 <p className="t-xs muted" style={{ marginTop: 'var(--s-3)' }}>
-                  {toques.length} toque(s) · classificado como <b style={{ color: 'var(--ink-2)' }}>{primeiroToque.channel ?? '—'}</b>.
-                  {primeiroToque.fbclid && ' Clique do Meta identificado.'}
-                  {primeiroToque.gclid && ' Clique do Google identificado.'}
+                  {toques.length} toque(s) no contato · origem mais recente deste negócio classificada como <b style={{ color: 'var(--ink-2)' }}>{toqueAtribuido.channel ?? '—'}</b>.
+                  {toqueAtribuido.fbclid && ' Clique do Meta identificado.'}
+                  {toqueAtribuido.gclid && ' Clique do Google identificado.'}
                 </p>
               </>
             ) : (

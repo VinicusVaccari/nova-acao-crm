@@ -37,7 +37,7 @@ async function resolverOpp(opportunityId?: string, phone?: string, criar = true)
 
   if (ident?.person_id) {
     const { data: opp } = await db.from('opportunities').select('id')
-      .eq('person_id', ident.person_id).not('stage', 'in', '(ganho,perdido)')
+      .eq('person_id', ident.person_id).is('lost_at', null).neq('stage', 'ganho')
       .order('created_at', { ascending: false }).limit(1).maybeSingle()
     if (opp) return opp.id as string
   }

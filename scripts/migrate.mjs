@@ -7,6 +7,8 @@
 // Uso:  node scripts/migrate.mjs            aplica o que falta
 //       node scripts/migrate.mjs --status   só mostra o que já foi aplicado
 //       node scripts/migrate.mjs --dry      mostra o que faria
+//       node scripts/migrate.mjs --only=0043_realinhar_slugs_etapas.sql
+//                                             aplica somente a migration indicada
 
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -25,6 +27,7 @@ const env = Object.fromEntries(
 const args = process.argv.slice(2)
 const STATUS_ONLY = args.includes('--status')
 const DRY = args.includes('--dry')
+const ONLY = args.find(a => a.startsWith('--only='))?.slice('--only='.length)
 
 // ---------------------------------------------------------------
 // Escolhe o meio de execução
@@ -99,7 +102,14 @@ const applied = new Set(
   (await run('select name from _migrations')).map(r => r.name)
 )
 
-const files = readdirSync(MIG_DIR).filter(f => f.endsWith('.sql')).sort()
+const allFiles = readdirSync(MIG_DIR).filter(f => f.endsWith('.sql')).sort()
+const files = ONLY ? allFiles.filter(f => f === ONLY) : allFiles
+
+if (ONLY && files.length === 0) {
+  console.error(`Migration não encontrada: ${ONLY}`)
+  await run.close?.()
+  process.exit(1)
+}
 
 if (STATUS_ONLY) {
   for (const f of files) console.log(`${applied.has(f) ? '[ok]     ' : '[pendente]'} ${f}`)

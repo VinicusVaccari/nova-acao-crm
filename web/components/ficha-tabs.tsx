@@ -138,7 +138,9 @@ function Historico({ d }: { d: Dados }) {
     ...d.atividades.map((a: any): Ev => ({
       at: a.occurred_at,
       ator: a.is_automated ? 'SDR (IA)' : ator,
-      texto: <>registrou {kindLabel[a.kind] ?? a.kind} {a.direction === 'inbound' ? 'recebido' : 'enviado'}{a.outcome ? ` — ${a.outcome}` : ''}{a.body ? `: ${a.body}` : ''}</>,
+      texto: a.kind === 'sistema'
+        ? <>{a.body}</>
+        : <>registrou {kindLabel[a.kind] ?? a.kind} {a.direction === 'inbound' ? 'recebido' : 'enviado'}{a.outcome ? ` — ${a.outcome}` : ''}{a.body ? `: ${a.body}` : ''}</>,
     })),
     ...d.reunioes.map((m: any): Ev => ({
       at: m.scheduled_at, ator,

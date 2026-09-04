@@ -8,7 +8,7 @@ async function negociosAbertos(): Promise<NegocioOpcao[]> {
   const { data } = await db
     .from('opportunities')
     .select('id, title, stage, people:person_id ( full_name )')
-    .neq('stage', 'perdido')
+    .is('lost_at', null)
     .order('stage_since', { ascending: false })
     .limit(300)
   return (data ?? [])

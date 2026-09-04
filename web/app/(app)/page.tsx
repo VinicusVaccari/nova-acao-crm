@@ -33,7 +33,8 @@ export default async function Hoje() {
     db
       .from('opportunities')
       .select('id, stage, next_step, next_step_due, expected_value, term_months, people(full_name), companies(trade_name)')
-      .not('stage', 'in', '(ganho,perdido,nutricao)')
+      .is('lost_at', null)
+      .not('stage', 'in', '(ganho,nutricao)')
       .not('next_step_due', 'is', null)
       .lt('next_step_due', fimDoDia.toISOString())
       .order('next_step_due')
@@ -42,7 +43,8 @@ export default async function Hoje() {
     db
       .from('opportunities')
       .select('id', { count: 'exact', head: true })
-      .not('stage', 'in', '(ganho,perdido,nutricao)')
+      .is('lost_at', null)
+      .not('stage', 'in', '(ganho,nutricao)')
       .is('next_step_due', null),
   ])
 
