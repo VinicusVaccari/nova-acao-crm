@@ -95,7 +95,11 @@ export async function carregarFicha(oppId: string) {
 
   const personId = opp.person_id as string
 
-  const [atividades, reunioes, propostas, historico, toques, objecoes, notas, tarefas, produtos, catalogo, arquivos] =
+  const toqueAtribuidoReq = opp.last_touchpoint_id
+    ? db.from('touchpoints').select('*').eq('id', opp.last_touchpoint_id).maybeSingle()
+    : Promise.resolve({ data: null })
+
+  const [atividades, reunioes, propostas, historico, toques, objecoes, notas, tarefas, produtos, catalogo, arquivos, toqueAtribuido] =
     await Promise.all([
       db.from('activities').select('*').eq('opportunity_id', oppId).order('occurred_at', { ascending: false }).limit(100),
       db.from('meetings').select('*').eq('opportunity_id', oppId).order('scheduled_at', { ascending: false }),
@@ -108,6 +112,7 @@ export async function carregarFicha(oppId: string) {
       db.from('opportunity_products').select('*, products(name, code, description)').eq('opportunity_id', oppId),
       db.from('products').select('id, code, name, description, default_price, recurrence').eq('active', true).order('sort_order'),
       db.from('deal_files').select('*').eq('opportunity_id', oppId).order('created_at', { ascending: false }),
+      toqueAtribuidoReq,
     ])
 
   // URLs assinadas (1h) para baixar arquivos e documentos de proposta
@@ -130,6 +135,7 @@ export async function carregarFicha(oppId: string) {
     propostas: propostasUrl,
     historico: historico.data ?? [],
     toques: toques.data ?? [],
+    toqueAtribuido: toqueAtribuido.data ?? null,
     objecoes: objecoes.data ?? [],
     notas: notas.data ?? [],
     tarefas: tarefas.data ?? [],

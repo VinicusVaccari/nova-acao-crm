@@ -58,6 +58,7 @@ export async function POST(req: Request) {
     ip: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
     user_agent: req.headers.get('user-agent'),
     referrer: body.referrer ?? req.headers.get('referer'),
+    landing_page: primeiro(body.landing_page, body.page_url) ?? null,
   }
 
   const { data, error } = await db.rpc('fn_ingest_lead', { p_payload: payload })
