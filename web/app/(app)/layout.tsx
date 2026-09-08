@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { usuarioAtual } from '@/lib/supabase/server'
 import { db } from '@/lib/db'
 import { carregarEstagios } from '@/lib/estagios-server'
+import { contarNaoLidas } from '@/lib/mensagens'
 import { EstagiosProvider } from '@/components/estagios-context'
 import { NavMobile, Sidebar } from '@/components/shell/sidebar'
 import { Topbar } from '@/components/shell/topbar'
@@ -11,10 +12,11 @@ import { Topbar } from '@/components/shell/topbar'
    canto escuro do logo. */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   // autenticação e contador de SLA em paralelo (não dependem um do outro)
-  const [usuario, sla, estagios] = await Promise.all([
+  const [usuario, sla, estagios, naoLidas] = await Promise.all([
     usuarioAtual(),
     db.from('v_sla_breaches').select('id', { count: 'exact', head: true }),
     carregarEstagios(),
+    contarNaoLidas().catch(() => 0),
   ])
   if (!usuario) redirect('/login')
   const count = sla.count
@@ -23,7 +25,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <EstagiosProvider value={estagios}>
       <div className="min-h-screen">
         <Topbar usuario={usuario} />
-        <Sidebar alertas={count ?? 0} />
+        <Sidebar alertas={count ?? 0} naoLidas={naoLidas} />
 
         {/* o fundo do main é o escuro da moldura; o painel claro flutua dentro */}
         <main
@@ -39,7 +41,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
         </main>
 
-        <NavMobile />
+        <NavMobile naoLidas={naoLidas} />
       </div>
     </EstagiosProvider>
   )

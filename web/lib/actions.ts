@@ -8,7 +8,7 @@ import { validateUpload } from './security/upload'
 import { integrationRateLimit } from './security/integration'
 import { usuarioAtual } from './supabase/server'
 import { cancelarEvento, criarEvento, desconectar } from './google'
-import { carregarConversas, carregarMensagens, type Conversa, type Mensagem } from './mensagens'
+import { carregarConversas, carregarMensagens, contarNaoLidas, marcarConversaLida, type Conversa, type Mensagem } from './mensagens'
 import { enviarWhatsapp } from './whatsapp'
 import { registrarPerdaAutorizada } from './negociacao-service'
 
@@ -25,6 +25,18 @@ export async function listarMensagens(
 ): Promise<{ mensagens: Mensagem[]; temMais: boolean }> {
   await requireOpportunityAccess(oppId)
   return carregarMensagens(oppId, antesDe)
+}
+
+/** Zera o contador de não lidas da conversa. Vale para o time inteiro. */
+export async function marcarLida(oppId: string): Promise<void> {
+  const { user } = await requireOpportunityAccess(oppId)
+  await marcarConversaLida(oppId, user.id)
+}
+
+/** Total de não lidas, para o aviso no menu lateral. */
+export async function totalNaoLidas(): Promise<number> {
+  await requireActiveUser()
+  return contarNaoLidas()
 }
 
 /** Base URL do app (para montar links dentro de eventos/descrições). */

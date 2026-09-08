@@ -101,15 +101,15 @@ function actions(db, guards = {}) {
     './db': { db }, './security/authorization': Object.fromEntries(names.map(name => [name, guards[name] ?? deny])),
     './supabase/server': { usuarioAtual: deny },
     './google': { cancelarEvento: deny, criarEvento: deny, desconectar: deny },
-    './mensagens': { carregarConversas: deny, carregarMensagens: deny }, './whatsapp': { enviarWhatsapp: deny },
+    './mensagens': { carregarConversas: deny, carregarMensagens: deny, contarNaoLidas: deny, marcarConversaLida: deny }, './whatsapp': { enviarWhatsapp: deny },
     './security/integration': { integrationRateLimit: async () => null },
     'next/cache': { revalidatePath() {} },
   })
 }
 
-test('todas as 38 Actions recusam chamada não autorizada antes de acessar banco/integradores', async () => {
+test('todas as 40 Actions recusam chamada não autorizada antes de acessar banco/integradores', async () => {
   const api = actions(new Proxy({}, { get() { throw new Error('BANCO ACESSADO ANTES DO GUARD') } }))
-  assert.equal(Object.keys(api).length, 38)
+  assert.equal(Object.keys(api).length, 40)
   for (const [name, action] of Object.entries(api)) {
     await assert.rejects(action({ oppId: id }, {}, {}, {}, {}), /FORBIDDEN/, name)
   }

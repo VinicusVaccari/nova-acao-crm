@@ -81,6 +81,46 @@ do $$ declare key text := gen_random_uuid()::text; begin
     raise exception 'Timeline não contém exatamente uma mensagem'; end if;
 end $$;
 
+-- Contador de não lidas: só mensagem do lead conta, a leitura zera, e ninguém
+-- marca leitura em conversa de outra carteira.
+--
+-- O ensaio reaplica a 0046, que revoga escrita de TODAS as tabelas do schema.
+-- Em produção a 0051 roda depois dela e reconcede; aqui repomos o mesmo grant
+-- para o ensaio enxergar o estado real.
+grant select, insert, update on public.inbox_leituras to authenticated;
+select set_config('request.jwt.claims',json_build_object('sub',current_setting('security_test.user_a'),'role','authenticated')::text,true);
+set local role authenticated;
+do $$ declare antes bigint; begin
+  select nao_lidas into antes from public.v_conversas
+    where opportunity_id=current_setting('security_test.deal_a')::uuid;
+  if coalesce(antes,0)<1 then raise exception 'Mensagem do lead não contou como não lida'; end if;
+  perform set_config('security_test.nao_lidas',antes::text,true);
+end $$;
+-- O envio é do backend (service_role); authenticated não executa a RPC.
+reset role;
+select public.fn_log_whatsapp_once(current_setting('security_test.deal_a')::uuid,
+  gen_random_uuid()::text,'whatsapp','outbound','Security test resposta','{}');
+set local role authenticated;
+do $$ declare depois bigint; begin
+  select nao_lidas into depois from public.v_conversas
+    where opportunity_id=current_setting('security_test.deal_a')::uuid;
+  if depois is distinct from current_setting('security_test.nao_lidas')::bigint then
+    raise exception 'Resposta do time mexeu no contador de não lidas'; end if;
+
+  insert into public.inbox_leituras(opportunity_id,lida_ate,lida_por)
+  values(current_setting('security_test.deal_a')::uuid,now(),current_setting('security_test.user_a')::uuid);
+  select nao_lidas into depois from public.v_conversas
+    where opportunity_id=current_setting('security_test.deal_a')::uuid;
+  if depois<>0 then raise exception 'Leitura não zerou o contador'; end if;
+
+  begin
+    insert into public.inbox_leituras(opportunity_id,lida_ate)
+    values(current_setting('security_test.deal_b')::uuid,now());
+    raise exception 'Leitura foi marcada em negócio de outra carteira';
+  exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+
 -- O wrapper manual atribui o lead ao criador e desfaz toda a ingestão quando
 -- a pessoa retorna para um negócio que pertence a outro vendedor.
 do $$ declare result jsonb; before_count bigint; email text; begin

@@ -1,8 +1,10 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { IconeAgenda, IconeComercial, IconeContatos, IconeEmpresas, IconeHoje, IconeMensagens, IconePipeline } from '@/components/icones'
+import { totalNaoLidas } from '@/lib/actions'
 
 type Item = {
   href: string
@@ -23,8 +25,27 @@ const GRUPOS: Item[][] = [
   [{ href: '/comercial', label: 'Indicadores', Icone: IconeComercial }],
 ]
 
-export function Sidebar({ alertas }: { alertas?: number }) {
+/* O servidor entrega o número já pintado; daí em diante o cliente confere
+   sozinho. 20s é o suficiente para quem está em OUTRA tela — dentro do inbox
+   quem manda é o polling de 2s de lá, que zera na hora ao abrir a conversa. */
+function useNaoLidas(inicial: number): number {
+  const [n, setN] = useState(inicial)
+  useEffect(() => {
+    let ativo = true
+    const tick = () => {
+      if (document.hidden) return
+      totalNaoLidas().then(t => { if (ativo) setN(t) }).catch(() => { /* próximo tick */ })
+    }
+    const id = setInterval(tick, 20_000)
+    document.addEventListener('visibilitychange', tick)
+    return () => { ativo = false; clearInterval(id); document.removeEventListener('visibilitychange', tick) }
+  }, [])
+  return n
+}
+
+export function Sidebar({ alertas, naoLidas = 0 }: { alertas?: number; naoLidas?: number }) {
   const path = usePathname()
+  const pendentes = useNaoLidas(naoLidas)
   const ativo = (href: string) => (href === '/' ? path === '/' : path.startsWith(href))
 
   return (
@@ -41,6 +62,11 @@ export function Sidebar({ alertas }: { alertas?: number }) {
               <Link key={it.href} href={it.href} className="rail-item" data-ativo={ativo(it.href)}>
                 <it.Icone />
                 {it.href === '/' && alertas ? <span className="rail-badge" /> : null}
+                {it.href === '/mensagens' && pendentes > 0 && (
+                  <span className="rail-contador" aria-label={`${pendentes} não lidas`}>
+                    {pendentes > 99 ? '99+' : pendentes}
+                  </span>
+                )}
                 <span className="rail-tip">{it.label}</span>
               </Link>
             ))}
@@ -52,8 +78,9 @@ export function Sidebar({ alertas }: { alertas?: number }) {
 }
 
 /** Barra inferior no celular — o rail some abaixo de md. */
-export function NavMobile() {
+export function NavMobile({ naoLidas = 0 }: { naoLidas?: number }) {
   const path = usePathname()
+  const pendentes = useNaoLidas(naoLidas)
   const itens = GRUPOS.flat()
   const ativo = (href: string) => (href === '/' ? path === '/' : path.startsWith(href))
 
@@ -74,7 +101,14 @@ export function NavMobile() {
             fontWeight: ativo(it.href) ? 700 : 500,
           }}
         >
-          <it.Icone />
+          <span style={{ position: 'relative', display: 'inline-flex' }}>
+            <it.Icone />
+            {it.href === '/mensagens' && pendentes > 0 && (
+              <span className="rail-contador" aria-label={`${pendentes} não lidas`}>
+                {pendentes > 99 ? '99+' : pendentes}
+              </span>
+            )}
+          </span>
           {it.label}
         </Link>
       ))}

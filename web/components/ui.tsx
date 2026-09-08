@@ -58,6 +58,28 @@ export function Avatar({
   )
 }
 
+/* ---------------- Contador de mensagens não lidas ----------------
+   Acima de 99 vira "99+": o número real não cabe e não muda a decisão
+   de quem olha. `aria-label` porque o dígito sozinho não se explica. */
+
+export function ContadorNaoLidas({ n }: { n: number }) {
+  if (n <= 0) return null
+  return (
+    <span
+      aria-label={`${n} ${n === 1 ? 'mensagem não lida' : 'mensagens não lidas'}`}
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        minWidth: 20, height: 20, padding: '0 6px', borderRadius: 999,
+        background: 'var(--good)', color: '#fff',
+        fontSize: 11, fontWeight: 700, lineHeight: 1, flexShrink: 0,
+        fontVariantNumeric: 'tabular-nums',
+      }}
+    >
+      {n > 99 ? '99+' : n}
+    </span>
+  )
+}
+
 /* =================================================================
    Componentes do sistema. Tudo aqui consome as escalas do
    design system — nenhum valor solto.

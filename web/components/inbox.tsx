@@ -2,10 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition, type MouseEvent } from 'react'
 import Link from 'next/link'
-import { Avatar } from '@/components/ui'
+import { Avatar, ContadorNaoLidas } from '@/components/ui'
 import { useEstagiosBoard, useCorEstagio } from '@/components/estagios-context'
 import { brlCurto } from '@/lib/format'
-import { adicionarNota, adicionarProduto, adicionarTarefa, atualizarContato, atualizarNegocio, contextoDeal, definirAtendimento, listarConversas, listarMensagens, moverEstagio, removerProduto, responderConversa, type ContextoDeal } from '@/lib/actions'
+import { adicionarNota, adicionarProduto, adicionarTarefa, atualizarContato, atualizarNegocio, contextoDeal, definirAtendimento, listarConversas, listarMensagens, marcarLida, moverEstagio, removerProduto, responderConversa, type ContextoDeal } from '@/lib/actions'
 import type { Conversa, Mensagem } from '@/lib/mensagens'
 
 const hora = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
@@ -256,6 +256,15 @@ export function Inbox({ conversas, selInicial }: { conversas: Conversa[]; selIni
     if (el) el.scrollTo({ top: el.scrollHeight })
   }, [selId, ultimaId])
 
+  /* Abrir a conversa — ou receber mensagem com ela aberta — marca como lida,
+     para o time inteiro. Não mexe no contador local: a conversa aberta já é
+     tratada como lida na renderização, o que evita o badge piscar de volta
+     no intervalo entre o polling de 2s e a gravação. */
+  useEffect(() => {
+    if (!selId) return
+    marcarLida(selId).catch(() => { /* o próximo tick tenta de novo */ })
+  }, [selId, ultimaId])
+
   return (
     <div className={`inbox${ctx ? '' : ' inbox--sem-ctx'}`}>
       {/* ---------- lista de conversas ---------- */}
@@ -266,15 +275,24 @@ export function Inbox({ conversas, selInicial }: { conversas: Conversa[]; selIni
         <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
           {filtradas.map(c => {
             const b = badgesStatus[statusConversa(c)]
+            // a conversa aberta está sendo lida agora — nunca mostra contador
+            const naoLidas = c.oppId === selId ? 0 : c.naoLidas
             return (
               <div key={c.oppId} className="conversa-item" data-sel={c.oppId === selId} onClick={() => setSelId(c.oppId)}>
                 <Avatar nome={c.nome} tamanho={40} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline justify-between gap-2">
-                    <span className="t-body truncate" style={{ fontWeight: 600 }}>{c.nome}</span>
-                    <span className="t-xs muted shrink-0">{quandoCurto(c.ultimaAt)}</span>
+                    <span className="t-body truncate" style={{ fontWeight: naoLidas ? 700 : 600 }}>{c.nome}</span>
+                    <span className="t-xs shrink-0" style={naoLidas ? { color: 'var(--brand-teal)', fontWeight: 600 } : undefined}>
+                      {quandoCurto(c.ultimaAt)}
+                    </span>
                   </div>
-                  <div className="t-sm muted truncate">{c.ultima || 'sem mensagens'}</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="t-sm truncate" style={naoLidas ? { color: 'var(--ink)', fontWeight: 500 } : { color: 'var(--ink-muted)' }}>
+                      {c.ultima || 'sem mensagens'}
+                    </span>
+                    {naoLidas > 0 && <ContadorNaoLidas n={naoLidas} />}
+                  </div>
                   <span className="chip" style={{ marginTop: 4, background: `color-mix(in srgb, ${b.cor} 14%, transparent)`, color: b.cor }}>
                     <span aria-hidden className="chip-dot" style={{ background: b.cor }} />
                     {b.texto}

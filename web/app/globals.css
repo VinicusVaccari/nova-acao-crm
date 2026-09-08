@@ -331,6 +331,23 @@ select.field { cursor: pointer; appearance: none; padding-right: var(--s-8);
   border: 2px solid var(--nav-bg);
 }
 
+/* contador de não lidas sobre o ícone de Mensagens. Verde, não vermelho:
+   mensagem esperando é trabalho a fazer, não falha — o vermelho do
+   .rail-badge fica reservado para SLA estourado. */
+.rail-contador {
+  position: absolute;
+  top: 4px; right: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px;
+  padding: 0 4px;
+  border-radius: var(--r-full);
+  background: var(--good);
+  border: 2px solid var(--nav-bg);
+  color: #fff;
+  font-size: 10px; font-weight: 700; line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
 /* tooltip que aparece ao passar o mouse */
 .rail-tip {
   position: absolute;

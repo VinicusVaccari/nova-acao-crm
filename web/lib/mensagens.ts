@@ -25,6 +25,7 @@ export type Conversa = {
   ultima: string
   atendimento: 'naia' | 'humano'   // trava: 'humano' = travado, Naia não responde
   humanoRespondeu: boolean          // o time já respondeu por aqui?
+  naoLidas: number                  // mensagens do lead desde a última leitura do time
 }
 
 export const MENSAGENS_POR_PAGINA = 50
@@ -33,7 +34,7 @@ export async function carregarConversas(): Promise<Conversa[]> {
   const userDb = await userDatabase()
   const { data, error } = await userDb
     .from('v_conversas')
-    .select('opportunity_id, nome, empresa, telefone, ultima_at, ultima, humano_respondeu')
+    .select('opportunity_id, nome, empresa, telefone, ultima_at, ultima, humano_respondeu, nao_lidas')
     .order('ultima_at', { ascending: false })
 
   if (error) throw new Error(`mensagens: ${error.message}`)
@@ -47,6 +48,7 @@ export async function carregarConversas(): Promise<Conversa[]> {
     ultima: (r.ultima as string) ?? '',
     atendimento: 'naia', // ajustado abaixo pela trava (v_trava_atual)
     humanoRespondeu: !!r.humano_respondeu,
+    naoLidas: Number(r.nao_lidas ?? 0),
   }))
 
   // estado da trava (controlada pelo n8n na tabela de cadastro). Só os
@@ -105,6 +107,29 @@ export async function carregarMensagens(
 
   await assinarAudios(mensagens)
   return { mensagens, temMais }
+}
+
+/* Total para o aviso do menu lateral. Só as conversas com algo pendente
+   voltam do banco — a lista inteira não interessa aqui. */
+export async function contarNaoLidas(): Promise<number> {
+  const userDb = await userDatabase()
+  const { data, error } = await userDb.from('v_conversas').select('nao_lidas').gt('nao_lidas', 0)
+  if (error) throw new Error(`mensagens: ${error.message}`)
+  return (data ?? []).reduce((total, r) => total + Number(r.nao_lidas ?? 0), 0)
+}
+
+/* A leitura é do time, não de cada pessoa: uma linha por negócio. Marca até
+   `agora` em vez do horário da última mensagem, senão o que chegar enquanto
+   a conversa está aberta na tela voltaria a contar como não lido. */
+export async function marcarConversaLida(oppId: string, profileId: string): Promise<void> {
+  const userDb = await userDatabase()
+  const { error } = await userDb
+    .from('inbox_leituras')
+    .upsert(
+      { opportunity_id: oppId, lida_ate: new Date().toISOString(), lida_por: profileId, lida_em: new Date().toISOString() },
+      { onConflict: 'opportunity_id' },
+    )
+  if (error) throw new Error(`mensagens: ${error.message}`)
 }
 
 /** Troca a referência interna do áudio por uma URL assinada. Só chega aqui
