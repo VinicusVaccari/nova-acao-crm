@@ -28,6 +28,7 @@ export async function enviarWhatsapp(
   }
   const url = `${ZAPI_BASE}/instances/${process.env.ZAPI_INSTANCE}/token/${process.env.ZAPI_TOKEN}/send-text`
   const res = await fetch(url, {
+    signal: AbortSignal.timeout(20000),
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -37,7 +38,7 @@ export async function enviarWhatsapp(
   })
   const txt = await res.text()
   if (!res.ok) {
-    console.error('enviarWhatsapp falhou:', res.status, txt)
+    console.error('enviarWhatsapp falhou:', res.status)
     return { ok: false, messageId: null }
   }
   let messageId: string | null = null
@@ -62,6 +63,7 @@ export async function acionarNaia(payload: {
   if (!url) return
   try {
     await fetch(url, {
+      signal: AbortSignal.timeout(20000),
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -70,7 +72,7 @@ export async function acionarNaia(payload: {
       body: JSON.stringify({ ...payload, audioUrl: payload.audioUrl ?? null }),
     })
   } catch (e) {
-    console.error('acionarNaia falhou:', e)
+    console.error('acionarNaia falhou:', e instanceof Error ? e.name : 'erro')
   }
 }
 
@@ -78,6 +80,18 @@ type ZapiInbound = {
   phone?: string; lid: string | null; messageId: string | null
   fromMe: boolean; fromApi: boolean; grupo: boolean; nome: string | null
   texto: string | null; tipo: 'text' | 'audio' | 'image'; audioUrl: string | null
+}
+
+/** Nem tudo que chega no lugar do nome serve como nome do lead. Descarta
+    identificador cru ("149035549777938@lid", só dígitos) e o nome do nosso
+    próprio perfil no WhatsApp — esse nunca é o nome de quem está do outro
+    lado, e foi assim que contatos acabaram batizados com o do vendedor. */
+export function nomeUtilizavel(v: unknown): string | null {
+  const s = typeof v === 'string' ? v.trim() : ''
+  if (!s || s.includes('@') || !/\p{L}/u.test(s)) return null
+  const proprio = process.env.ZAPI_PERFIL_NOME?.trim()
+  if (proprio && s.localeCompare(proprio, 'pt-BR', { sensitivity: 'base' }) === 0) return null
+  return s
 }
 
 /** Extrai o essencial do payload da Z-API (mensagem recebida), de forma
@@ -113,14 +127,22 @@ export function parseZapiInbound(body: Record<string, unknown>): ZapiInbound {
   else if (typeof b.message === 'string') { tipo = 'text'; texto = b.message }
   else if (b.image) { tipo = 'image'; texto = b.image.caption || '[imagem recebida]' }
 
+  // senderName = quem ENVIOU a mensagem; chatName = de quem é a CONVERSA.
+  // Em fromMe o remetente somos nós, então o nome do lead só pode sair do
+  // chatName — usar senderName aqui grava o nosso perfil no contato.
+  const fromMe = !!b.fromMe
+  const nome = fromMe
+    ? nomeUtilizavel(b.chatName)
+    : (nomeUtilizavel(b.senderName) ?? nomeUtilizavel(b.chatName))
+
   return {
     phone,
     lid,
     messageId: typeof b.messageId === 'string' ? b.messageId : null,
-    fromMe: !!b.fromMe,
+    fromMe,
     fromApi: !!b.fromApi,   // true = saiu pela API (nosso sistema/Naia), não digitado na mão
     grupo,
-    nome: b.senderName ?? b.chatName ?? null,
+    nome,
     texto,
     tipo,
     audioUrl,

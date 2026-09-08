@@ -1,30 +1,15 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
-import { IconeConfig, IconeSair, IconeTema } from '@/components/icones'
+import { IconeConfig, IconeSair } from '@/components/icones'
 import { LogoSimbolo } from '@/components/logo-nova'
 
 export function Topbar({ usuario }: { usuario: { nome: string; email: string; papel: string; avatar?: string | null } }) {
   const router = useRouter()
-  const [tema, setTema] = useState<'light' | 'dark' | null>(null)
   const [menu, setMenu] = useState(false)
-
-  useEffect(() => {
-    const salvo = localStorage.getItem('tema') as 'light' | 'dark' | null
-    const inicial = salvo ?? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-    setTema(inicial)
-    document.documentElement.dataset.theme = inicial
-  }, [])
-
-  function alternarTema() {
-    const novo = tema === 'dark' ? 'light' : 'dark'
-    setTema(novo)
-    localStorage.setItem('tema', novo)
-    document.documentElement.dataset.theme = novo
-  }
 
   async function sair() {
     const sb = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
@@ -70,16 +55,6 @@ export function Topbar({ usuario }: { usuario: { nome: string; email: string; pa
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={alternarTema}
-            className="grid place-items-center"
-            style={{ width: 36, height: 36, borderRadius: 'var(--r-md)', color: 'var(--nav-ink-2)', border: '1px solid var(--nav-hairline)' }}
-            title={tema === 'dark' ? 'Tema claro' : 'Tema escuro'}
-            aria-label="Alternar tema"
-          >
-            <IconeTema />
-          </button>
-
           <div className="relative">
             <button
               onClick={() => setMenu(v => !v)}

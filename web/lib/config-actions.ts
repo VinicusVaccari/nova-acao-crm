@@ -7,6 +7,8 @@ import { db } from './db'
 import { usuarioAtual } from './supabase/server'
 import { PAPEIS_VALIDOS, papelLabel, type Papel } from './papeis'
 import { enviarEmailConvite } from './email'
+import { requireAdmin } from './security/authorization'
+import { validateUpload } from './security/upload'
 
 /* -----------------------------------------------------------------
    Configurações → Users. Gestão de usuários (profiles), equipes
@@ -75,7 +77,9 @@ export async function atualizarUsuario(
   id: string,
   campos: { role?: string; team_id?: string | null; is_active?: boolean; lead_capacity?: number },
 ): Promise<Resultado> {
-  try { await exigirGestor() } catch (e) { return { ok: false, erro: (e as Error).message } }
+  let actor
+  try { actor = await requireAdmin() } catch (e) { return { ok: false, erro: (e as Error).message } }
+  if (actor.id === id && (campos.is_active === false || (campos.role !== undefined && campos.role !== 'admin'))) return { ok: false, erro: 'Não é permitido remover seu próprio acesso administrativo.' }
 
   const patch: Record<string, unknown> = {}
   if (campos.role !== undefined) {
@@ -106,6 +110,7 @@ export async function convidarUsuario(
   const mail = email.trim().toLowerCase()
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) return { ok: false, erro: 'E-mail inválido.' }
   if (!PAPEIS_VALIDOS.has(role as Papel)) return { ok: false, erro: 'Papel inválido.' }
+  if (role === 'admin' && quem.papel !== 'admin') return { ok: false, erro: 'Somente administradores podem convidar outro administrador.' }
 
   // já existe usuário com esse e-mail?
   const { data: jaTem } = await db.from('profiles').select('id').eq('email', mail).maybeSingle()
@@ -230,6 +235,7 @@ export async function atualizarMinhaFoto(
   const tipos: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif' }
   const ext = tipos[file.type]
   if (!ext) return { ok: false, erro: 'Formato inválido. Use JPG, PNG ou GIF.' }
+  try { await validateUpload(file, true) } catch (e) { return { ok: false, erro: (e as Error).message } }
 
   const bytes = new Uint8Array(await file.arrayBuffer())
   const path = `${u.id}.${ext}`

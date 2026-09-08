@@ -1,0 +1,13 @@
+.env*
+*.pem
+*.md
+*.log
+*.tsbuildinfo
+.security-local/
+.git/
+.vercel/
+node_modules/
+.next/
+out/
+build/
+coverage/

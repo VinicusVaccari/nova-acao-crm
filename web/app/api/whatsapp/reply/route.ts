@@ -1,3 +1,4 @@
+import { integrationAuthorized, readBoundedJson, integrationRateLimit } from '@/lib/security/integration'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { enviarWhatsapp } from '@/lib/whatsapp'
@@ -21,12 +22,13 @@ export const dynamic = 'force-dynamic'
 export async function POST(req: Request) {
   const secret = process.env.WHATSAPP_WEBHOOK_SECRET
   let body: Record<string, unknown>
-  try { body = await req.json() } catch { return NextResponse.json({ erro: 'JSON inválido' }, { status: 400 }) }
+  try { body = await readBoundedJson(req) } catch { return NextResponse.json({ erro: 'JSON inválido' }, { status: 400 }) }
 
-  const urlSecret = new URL(req.url).searchParams.get('secret')
-  if (secret && body.secret !== secret && urlSecret !== secret) {
+  if (!integrationAuthorized(req, secret, body.secret)) {
     return NextResponse.json({ erro: 'não autorizado' }, { status: 401 })
   }
+  const limited = await integrationRateLimit('web/app/api/whatsapp/reply/route.ts')
+  if (limited) return limited
 
   const mensagem = (body.mensagem ?? body.message) as string | undefined
   if (!mensagem || !mensagem.trim()) {

@@ -1,9 +1,11 @@
+import { requireManager } from '@/lib/security/authorization'
 import { db } from '@/lib/db'
 import { ProdutosAdmin } from '@/components/config/produtos-admin'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ProdutosPage() {
+  await requireManager()
   const { data } = await db
     .from('products')
     .select('id, name, active, default_price, recurrence, sort_order')

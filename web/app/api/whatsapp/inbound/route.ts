@@ -1,6 +1,9 @@
+import { integrationAuthorized, readBoundedJson, integrationRateLimit } from '@/lib/security/integration'
+import { downloadAudio } from '@/lib/security/media'
+import { randomUUID } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { acionarNaia, parseZapiInbound } from '@/lib/whatsapp'
+import { acionarNaia, nomeUtilizavel, parseZapiInbound } from '@/lib/whatsapp'
 
 /* -----------------------------------------------------------------
    Webhook de MENSAGEM RECEBIDA. É este endereço que vai na Z-API
@@ -15,36 +18,39 @@ import { acionarNaia, parseZapiInbound } from '@/lib/whatsapp'
 export const dynamic = 'force-dynamic'
 
 /** Baixa o áudio temporário da Z-API (Backblaze) e guarda no nosso Storage,
-    que é permanente — a URL da Z-API expira. Devolve a URL pública nossa,
-    ou null se algo falhar (aí o chamador usa a URL temporária como fallback). */
+    privado — a URL da Z-API expira. Devolve uma referência interna, assinada
+    apenas para destinatários autorizados, ou null se a validação falhar. */
 async function persistirAudio(url: string): Promise<string | null> {
   try {
-    const res = await fetch(url)
-    if (!res.ok) return null
-    const ct = res.headers.get('content-type') || 'audio/ogg'
-    const ext = ct.includes('ogg') ? 'ogg' : ct.includes('mpeg') ? 'mp3'
-      : (ct.includes('mp4') || ct.includes('m4a')) ? 'm4a' : 'ogg'
-    const bytes = new Uint8Array(await res.arrayBuffer())
-    const path = `${new Date().toISOString().slice(0, 10)}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
-    const { error } = await db.storage.from('wa-media').upload(path, bytes, { contentType: ct, upsert: false })
+    const { bytes, mime, ext } = await downloadAudio(url)
+    const path = `${new Date().toISOString().slice(0, 10)}/${randomUUID()}.${ext}`
+    const { error } = await db.storage.from('wa-audio').upload(path, bytes, { contentType: mime, upsert: false })
     if (error) { console.error('persistirAudio upload:', error.message); return null }
-    return db.storage.from('wa-media').getPublicUrl(path).data.publicUrl
+    return `wa-audio:${path}`
   } catch (e) {
-    console.error('persistirAudio:', e)
+    console.error('persistirAudio: download ou armazenamento recusado', e instanceof Error ? e.name : 'erro')
     return null
   }
 }
 
 export async function POST(req: Request) {
   const secret = process.env.WHATSAPP_WEBHOOK_SECRET
-  if (secret && new URL(req.url).searchParams.get('secret') !== secret) {
+  if (!integrationAuthorized(req, secret)) {
     return NextResponse.json({ erro: 'não autorizado' }, { status: 401 })
   }
+  const limited = await integrationRateLimit('web/app/api/whatsapp/inbound/route.ts')
+  if (limited) return limited
 
   let body: Record<string, unknown>
-  try { body = await req.json() } catch { return NextResponse.json({ ok: true, ignored: 'json' }) }
+  try { body = await readBoundedJson(req) } catch { return NextResponse.json({ ok: true, ignored: 'json' }) }
 
-  const { phone, lid, fromMe, fromApi, grupo, nome, texto, tipo, audioUrl } = parseZapiInbound(body)
+  const { phone, lid, fromMe, fromApi, grupo, nome, texto, tipo, audioUrl, messageId } = parseZapiInbound(body)
+  if (messageId) {
+    const { data: receipt, error } = await db.from('security_webhook_receipts').select('message_id')
+      .eq('message_id', messageId).eq('direction', fromMe ? 'outbound' : 'inbound').maybeSingle()
+    if (error) return NextResponse.json({ erro: 'Proteção de mensagens indisponível.' }, { status: 503 })
+    if (receipt) return NextResponse.json({ ok: true, duplicate: true })
+  }
 
   // DIAGNÓSTICO: registra o cru de TODO webhook (antes de qualquer filtro),
   // pra enxergar o que a Z-API manda. Best-effort — nunca quebra o fluxo.
@@ -86,13 +92,21 @@ export async function POST(req: Request) {
 
   const { data: ident } = await db
     .from('identities')
-    .select('person_id')
+    .select('person_id, people:person_id ( full_name )')
     .in('kind', ['phone', 'wa_id'])
     .in('value', [tel, digits])
     .limit(1)
     .maybeSingle()
 
   if (ident?.person_id) {
+    // O nome só era gravado na criação do lead. Quando ele ficou vazio (ou
+    // virou um identificador), a primeira mensagem com nome de verdade
+    // conserta. Nome já preenchido nunca é sobrescrito.
+    const atual = (ident.people as { full_name?: string | null } | null)?.full_name
+    if (nome && !nomeUtilizavel(atual)) {
+      await db.from('people').update({ full_name: nome }).eq('id', ident.person_id)
+    }
+
     const { data: opp } = await db
       .from('opportunities')
       .select('id')
@@ -118,11 +132,10 @@ export async function POST(req: Request) {
   }
   if (!oppId) return NextResponse.json({ erro: 'sem oportunidade' }, { status: 500 })
 
-  // áudio: persiste no nosso Storage (a URL da Z-API é temporária). Se
-  // falhar, mantém a URL temporária como fallback.
+  // Referência privada permanente; nunca repassa URL arbitrária ao navegador.
   const audioFinal = tipo === 'audio' && audioUrl
-    ? ((await persistirAudio(audioUrl)) ?? audioUrl)
-    : audioUrl
+    ? await persistirAudio(audioUrl)
+    : null
 
   // ================================================================
   // fromMe = mensagem SAINDO do nosso número. Pode ser:
@@ -150,27 +163,31 @@ export async function POST(req: Request) {
     if (eco) return NextResponse.json({ ok: true, opportunityId: oppId, echo: 'dedup' })
 
     // Rodrigues respondeu na mão → registra no chat e assume o lead
-    await db.rpc('fn_log_activity', {
+    const { data: logged, error: logError } = await db.rpc('fn_log_whatsapp_once', {
       p_opportunity_id: oppId,
+      p_message_id: messageId,
       p_kind: kind,
       p_direction: 'outbound',
       p_body: texto,
-      p_is_automated: false,
       p_meta: audioFinal ? { audioUrl: audioFinal } : {},
     })
+    if (logError) return NextResponse.json({ erro: 'Não foi possível registrar a mensagem.' }, { status: 500 })
+    if (!logged) return NextResponse.json({ ok: true, duplicate: true })
     await db.rpc('fn_intervencao', { p_phone: digits, p_name: nome })
     return NextResponse.json({ ok: true, opportunityId: oppId, manual: true })
   }
 
   // ---- loga a mensagem recebida (entra no inbox) ----
-  await db.rpc('fn_log_activity', {
+  const { data: logged, error: logError } = await db.rpc('fn_log_whatsapp_once', {
     p_opportunity_id: oppId,
+    p_message_id: messageId,
     p_kind: kind,
     p_direction: 'inbound',
     p_body: texto,
-    p_is_automated: false,
     p_meta: audioFinal ? { audioUrl: audioFinal } : {},
   })
+  if (logError) return NextResponse.json({ erro: 'Não foi possível registrar a mensagem.' }, { status: 500 })
+  if (!logged) return NextResponse.json({ ok: true, duplicate: true })
 
   // trava vem da tabela de cadastro (controlada pelo n8n): se travado, Naia não responde
   const { data: travado } = await db.rpc('fn_trava_status', { p_phone: digits })
@@ -181,7 +198,12 @@ export async function POST(req: Request) {
   // regra normal: só aciona a Naia quando NÃO travado.
   // exceção: número de teste sempre aciona (pra rodar o #reset no n8n).
   if (!travado || teste) {
-    await acionarNaia({ telefone: digits, mensagem: texto, nome, opportunityId: oppId, tipo, audioUrl })
+    let signedAudio: string | null = null
+    if (audioFinal?.startsWith('wa-audio:')) {
+      const { data } = await db.storage.from('wa-audio').createSignedUrl(audioFinal.slice('wa-audio:'.length), 3600)
+      signedAudio = data?.signedUrl ?? null
+    }
+    await acionarNaia({ telefone: digits, mensagem: texto, nome, opportunityId: oppId, tipo, audioUrl: signedAudio })
   }
 
   return NextResponse.json({ ok: true, opportunityId: oppId, travado: !!travado, teste: !!teste })

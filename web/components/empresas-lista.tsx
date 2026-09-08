@@ -1,5 +1,7 @@
 'use client'
 
+import { csvCell } from '@/lib/security/policy'
+
 import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Avatar } from '@/components/ui'
@@ -55,7 +57,7 @@ export function EmpresasLista({ empresas, segmentos = [] }: { empresas: EmpresaR
   const seta = (col: Ordem) => (ordem === col ? (asc ? ' ▲' : ' ▼') : '')
 
   const exportarCsv = () => {
-    const esc = (v: string) => `"${(v ?? '').replace(/"/g, '""')}"`
+    const esc = csvCell
     const cab = ['Empresa', 'Segmento', 'Cidade', 'UF', 'Negociações', 'Último contato', 'Responsável']
     const linhas = filtradas.map(e => [
       e.nome, e.segment ?? '', e.city ?? '', e.state ?? '',

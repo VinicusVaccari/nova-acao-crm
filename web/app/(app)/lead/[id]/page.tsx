@@ -1,3 +1,4 @@
+import { requireActiveUser } from '@/lib/security/authorization'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
@@ -13,6 +14,7 @@ import { carregarCamposCustom } from '@/lib/campos'
 export const dynamic = 'force-dynamic'
 
 export default async function Ficha({ params }: { params: Promise<{ id: string }> }) {
+  await requireActiveUser()
   const { id } = await params
   const [ficha, motivos, usuariosRes, estagios, segRes] = await Promise.all([
     carregarFicha(id),
@@ -28,7 +30,7 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
   const corEstagio = (s: string) => mapaEstagio[s]?.cor ?? '#7c7595'
   const usuarios = (usuariosRes.data ?? []) as { id: string; full_name: string }[]
 
-  const { opp, atividades, reunioes, propostas, historico, toques, toqueAtribuido: toqueDireto, objecoes, notas, tarefas, produtos, catalogo, arquivos } = ficha
+  const { opp, atividades, atividadesTruncadas, reunioes, propostas, historico, toques, toqueAtribuido: toqueDireto, objecoes, notas, tarefas, produtos, catalogo, arquivos } = ficha
   const pessoa = opp.people as Record<string, string>
   const empresa = opp.companies as Record<string, string> | null
   const dono = opp.profiles as Record<string, string> | null
@@ -216,6 +218,7 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
           empresaNome={empresa?.trade_name ?? undefined}
           usuarios={usuarios}
           atividades={atividades}
+          atividadesTruncadas={atividadesTruncadas}
           historico={historico}
           reunioes={reunioes}
           propostas={propostas}

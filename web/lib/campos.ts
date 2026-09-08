@@ -1,5 +1,6 @@
 import 'server-only'
 import { db } from './db'
+import { requireActiveUser, requireEntityAccess } from './security/authorization'
 
 /* Carrega as definições de campos personalizados de uma entidade
    (company | contact) já com o VALOR salvo para uma entidade específica
@@ -19,6 +20,8 @@ export async function carregarCamposCustom(
   entity: 'company' | 'contact',
   entityId: string | null,
 ): Promise<CampoComValor[]> {
+  await requireActiveUser()
+  if (entityId) await requireEntityAccess(entity, entityId)
   const { data: defs } = await db
     .from('custom_fields')
     .select('id, key, label, field_type, options, required')

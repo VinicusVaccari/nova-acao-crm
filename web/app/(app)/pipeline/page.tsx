@@ -1,6 +1,6 @@
+import { userDatabase } from '@/lib/security/user-db'
 import Link from 'next/link'
 import { carregarPipeline } from '@/lib/crm'
-import { db } from '@/lib/db'
 import { Kanban } from '@/components/kanban'
 import { NovoLead } from '@/components/novo-lead'
 import { brlCurto, num } from '@/lib/format'
@@ -8,6 +8,7 @@ import { brlCurto, num } from '@/lib/format'
 export const dynamic = 'force-dynamic'
 
 export default async function Pipeline() {
+  const db = await userDatabase()
   const [cards, cat] = await Promise.all([
     carregarPipeline(),
     db.from('products').select('id, name').eq('active', true).order('sort_order'),

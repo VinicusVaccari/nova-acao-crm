@@ -30,12 +30,8 @@ export function proxy(req: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  if (temSessao && rota.startsWith('/login')) {
-    const url = req.nextUrl.clone()
-    url.pathname = '/'
-    url.search = ''
-    return NextResponse.redirect(url)
-  }
+  // Nunca redireciona /login apenas pela presença do cookie: ele pode estar
+  // expirado, ser falso ou pertencer a uma conta desativada (loop de redirects).
 
   return NextResponse.next()
 }

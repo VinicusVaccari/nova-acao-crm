@@ -1,3 +1,4 @@
+import { integrationAuthorized, readBoundedJson, integrationRateLimit } from '@/lib/security/integration'
 import { NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
 import { db } from '@/lib/db'
@@ -11,9 +12,7 @@ import { db } from '@/lib/db'
 export const dynamic = 'force-dynamic'
 
 function autorizado(req: Request): boolean {
-  const esperado = process.env.NAIA_API_SECRET || process.env.WHATSAPP_WEBHOOK_SECRET
-  if (!esperado) return true
-  return new URL(req.url).searchParams.get('secret') === esperado
+  return integrationAuthorized(req, process.env.NAIA_API_SECRET)
 }
 
 function slugify(l: string): string {
@@ -23,9 +22,11 @@ function slugify(l: string): string {
 
 export async function POST(req: Request) {
   if (!autorizado(req)) return NextResponse.json({ ok: false, erro: 'não autorizado' }, { status: 401 })
+  const limited = await integrationRateLimit('web/app/api/naia/motivo-perda/route.ts')
+  if (limited) return limited
 
   let body: Record<string, unknown>
-  try { body = await req.json() } catch { return NextResponse.json({ ok: false, erro: 'json inválido' }, { status: 400 }) }
+  try { body = await readBoundedJson(req) } catch { return NextResponse.json({ ok: false, erro: 'json inválido' }, { status: 400 }) }
 
   const label = String(body.label ?? body.nome ?? '').trim()
   if (!label) return NextResponse.json({ ok: false, erro: 'informe "label"' }, { status: 400 })

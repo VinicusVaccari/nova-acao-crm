@@ -1,5 +1,7 @@
 'use client'
 
+import { csvCell } from '@/lib/security/policy'
+
 import { useMemo, useState } from 'react'
 import { Avatar } from '@/components/ui'
 
@@ -52,7 +54,7 @@ export function ContatosLista({ contatos }: { contatos: ContatoRow[] }) {
   const seta = (col: Ordem) => (ordem === col ? (asc ? ' ▲' : ' ▼') : '')
 
   const exportarCsv = () => {
-    const esc = (v: string) => `"${(v ?? '').replace(/"/g, '""')}"`
+    const esc = csvCell
     const cab = ['Nome', 'Cargo', 'Empresa', 'E-mail', 'Telefone', 'Negociações', 'Último contato', 'Responsável']
     const linhas = filtrados.map(c => [
       c.nome, c.cargo ?? '', c.empresa ?? '', c.email_primary ?? '', c.phone_primary ?? '',

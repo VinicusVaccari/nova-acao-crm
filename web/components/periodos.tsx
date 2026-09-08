@@ -7,18 +7,22 @@ const OPCOES = [
 ]
 
 /** Controle segmentado de período. Uma linha só, acima dos gráficos. */
-export function Periodos({ atual, base }: { atual: number; base: string }) {
+export function Periodos({ atual, base, incluirMes = false }: { atual: number | null; base: string; incluirMes?: boolean }) {
+  const opcoes = incluirMes
+    ? [{ dias: null, label: 'Este mês' }, { dias: 1, label: 'Hoje' }, ...OPCOES, { dias: 365, label: '365 dias' }]
+    : OPCOES
   return (
     <div
-      className="inset flex items-center"
+      className="inset flex flex-wrap items-center"
       style={{ padding: 3, gap: 2, border: '1px solid var(--hairline)' }}
     >
-      {OPCOES.map(o => {
+      {opcoes.map(o => {
         const ativo = o.dias === atual
         return (
           <Link
-            key={o.dias}
-            href={`${base}?dias=${o.dias}`}
+            key={o.dias ?? 'mes'}
+            href={o.dias === null ? base : `${base}?dias=${o.dias}`}
+            aria-current={ativo ? 'page' : undefined}
             className="t-sm"
             style={{
               padding: '6px 12px',

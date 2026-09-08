@@ -1,3 +1,4 @@
+import { integrationAuthorized, readBoundedJson, integrationRateLimit } from '@/lib/security/integration'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -19,9 +20,7 @@ import { db } from '@/lib/db'
 export const dynamic = 'force-dynamic'
 
 function autorizado(req: Request): boolean {
-  const esperado = process.env.NAIA_API_SECRET || process.env.WHATSAPP_WEBHOOK_SECRET
-  if (!esperado) return true
-  return new URL(req.url).searchParams.get('secret') === esperado
+  return integrationAuthorized(req, process.env.NAIA_API_SECRET)
 }
 
 /** Resolve a oportunidade por id ou por telefone (cria o lead se preciso). */
@@ -67,6 +66,8 @@ async function carregarValores(entityId: string | null, ids: number[]) {
 // ---------------- GET (contexto) ----------------
 export async function GET(req: Request) {
   if (!autorizado(req)) return NextResponse.json({ erro: 'não autorizado' }, { status: 401 })
+  const limited = await integrationRateLimit('web/app/api/naia/deal/route.ts')
+  if (limited) return limited
   const url = new URL(req.url)
   const oppId = await resolverOpp(url.searchParams.get('opportunityId') ?? undefined, url.searchParams.get('phone') ?? undefined, false)
   if (!oppId) return NextResponse.json({ erro: 'oportunidade não encontrada' }, { status: 404 })
@@ -106,9 +107,11 @@ export async function GET(req: Request) {
 // ---------------- POST (patch) ----------------
 export async function POST(req: Request) {
   if (!autorizado(req)) return NextResponse.json({ erro: 'não autorizado' }, { status: 401 })
+  const limited = await integrationRateLimit('web/app/api/naia/deal/route.ts')
+  if (limited) return limited
 
   let body: Record<string, unknown>
-  try { body = await req.json() } catch { return NextResponse.json({ erro: 'json inválido' }, { status: 400 }) }
+  try { body = await readBoundedJson(req) } catch { return NextResponse.json({ erro: 'json inválido' }, { status: 400 }) }
 
   const oppId = await resolverOpp(body.opportunityId as string | undefined, body.phone as string | undefined, true)
   if (!oppId) return NextResponse.json({ erro: 'informe opportunityId ou phone' }, { status: 400 })

@@ -31,9 +31,11 @@ export async function usuarioAtual() {
 
   const { data: perfil } = await sb
     .from('profiles')
-    .select('id, full_name, email, role, avatar_url')
+    .select('id, full_name, email, role, avatar_url, is_active')
     .eq('id', user.id)
     .maybeSingle()
+
+  if (!perfil || perfil.is_active !== true) return null
 
   return {
     id: user.id,

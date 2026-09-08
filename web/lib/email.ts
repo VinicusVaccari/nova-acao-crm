@@ -39,8 +39,8 @@ export async function enviarEmailConvite(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<meta name="supported-color-schemes" content="light dark">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
 <title>Você foi convidado para o CRM da Nova Ação</title>
 <!--[if mso]>
 <style>body,table,td,a{font-family:Tahoma,Verdana,Arial,sans-serif !important;}</style>

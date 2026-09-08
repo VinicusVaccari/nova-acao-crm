@@ -2,14 +2,29 @@
 
 import { revalidatePath } from 'next/cache'
 import { db } from './db'
+import { requireActiveUser, requireOpportunityAccess, requireMeetingAccess, requireCalendarEventAccess, requireManager, requireAdmin } from './security/authorization'
+import { allowedPatch } from './security/policy'
+import { validateUpload } from './security/upload'
+import { integrationRateLimit } from './security/integration'
 import { usuarioAtual } from './supabase/server'
 import { cancelarEvento, criarEvento, desconectar } from './google'
-import { carregarConversas, type Conversa } from './mensagens'
+import { carregarConversas, carregarMensagens, type Conversa, type Mensagem } from './mensagens'
 import { enviarWhatsapp } from './whatsapp'
+import { registrarPerdaAutorizada } from './negociacao-service'
 
 /** Conversas do inbox — usada pelo polling do inbox (atualiza sozinho). */
 export async function listarConversas(): Promise<Conversa[]> {
+  await requireActiveUser()
   return carregarConversas()
+}
+
+/** Fio de uma conversa. `antesDe` pagina para trás, a partir do `at` da
+    mensagem mais antiga que já está na tela. */
+export async function listarMensagens(
+  oppId: string, antesDe?: string,
+): Promise<{ mensagens: Mensagem[]; temMais: boolean }> {
+  await requireOpportunityAccess(oppId)
+  return carregarMensagens(oppId, antesDe)
 }
 
 /** Base URL do app (para montar links dentro de eventos/descrições). */
@@ -38,10 +53,11 @@ export async function moverEstagio(
   estagio: string,
   motivo?: string
 ): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
   const { error } = await db.rpc('fn_move_stage', {
     p_opportunity_id: oppId,
     p_to_stage: estagio,
-    p_actor: null,
+    p_actor: (await requireActiveUser()).id,
     p_actor_type: 'user',
     p_reason: motivo ?? null,
     p_meta: {},
@@ -64,11 +80,13 @@ export async function reordenarCard(
   novoRank: number,
   estagioMudou: boolean
 ): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
+  if (!Number.isFinite(novoRank)) return { ok: false, erro: 'Ordem inválida.' }
   if (estagioMudou) {
     const { error } = await db.rpc('fn_move_stage', {
       p_opportunity_id: oppId,
       p_to_stage: estagioDestino,
-      p_actor: null,
+      p_actor: (await requireActiveUser()).id,
       p_actor_type: 'user',
       p_reason: null,
       p_meta: {},
@@ -92,34 +110,16 @@ export async function reordenarCard(
 
 /** Marca a negociação como PERDIDA sem mexer na etapa. Motivo obrigatório
     (alimenta o mapa de objeções). */
-export async function marcarPerdido(oppId: string, motivo: string, actorType: 'user' | 'ai' = 'user'): Promise<Resultado> {
-  if (!motivo) return { ok: false, erro: 'Motivo da perda é obrigatório.' }
-  const agora = new Date().toISOString()
-  const { data: o } = await db.from('opportunities').select('stage').eq('id', oppId).maybeSingle()
-  const { error } = await db.from('opportunities')
-    .update({ lost_at: agora, lost_reason: motivo, paused_at: null })
-    .eq('id', oppId)
-  if (error) return { ok: false, erro: error.message }
-
-  // registra na timeline — o Histórico lê stage_history e mostra "marcou como
-  // Perdido (motivo)". Mantém a etapa real; esta linha é só o log da perda.
-  const { data: mr } = await db.from('lost_reasons').select('label').eq('code', motivo).maybeSingle()
-  await db.from('stage_history').insert({
-    opportunity_id: oppId,
-    from_stage: (o?.stage as string) ?? null,
-    to_stage: 'perdido',
-    reason: mr?.label ?? motivo,
-    actor_type: actorType,
-    changed_at: agora,
-  })
-
-  recarregar(oppId)
-  return { ok: true }
+export async function marcarPerdido(oppId: string, motivo: string, _actorType: 'user' | 'ai' = 'user'): Promise<Resultado> {
+  const { user } = await requireOpportunityAccess(oppId)
+  void _actorType // Compatibilidade de assinatura; ator vem somente da sessão.
+  return registrarPerdaAutorizada(oppId, motivo, { tipo: 'user', id: user.id })
 }
 
 /** Cria um motivo de perda na lista gerenciada (para o fluxo "escolher ou
     criar" ao marcar perda). Não duplica; devolve o code. */
 export async function criarMotivoPerda(label: string): Promise<{ ok: true; code: string; label: string } | { ok: false; erro: string }> {
+  await requireActiveUser()
   const u = await usuarioAtual()
   if (!u) return { ok: false, erro: 'Sem sessão.' }
   const l = (label ?? '').trim()
@@ -137,6 +137,7 @@ export async function criarMotivoPerda(label: string): Promise<{ ok: true; code:
 /** Retoma uma negociação perdida ou pausada: volta a Em andamento na mesma
     etapa em que estava. */
 export async function retomarNegociacao(oppId: string): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
   const { error } = await db.from('opportunities')
     .update({ lost_at: null, lost_reason: null, paused_at: null })
     .eq('id', oppId)
@@ -156,6 +157,7 @@ async function logSistema(oppId: string, texto: string) {
 
 /** Pausa a negociação (só se não estiver perdida). Mantém a etapa. */
 export async function pausarNegociacao(oppId: string): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
   const { data: o } = await db.from('opportunities').select('lost_at').eq('id', oppId).maybeSingle()
   if (o?.lost_at) return { ok: false, erro: 'Negócio perdido não pode ser pausado — retome antes.' }
   const { error } = await db.from('opportunities')
@@ -170,6 +172,7 @@ export async function pausarNegociacao(oppId: string): Promise<Resultado> {
 /** Apaga a negociação de vez. Os filhos (notas, tarefas, reuniões, produtos,
     histórico, etc.) caem por ON DELETE CASCADE. Irreversível. */
 export async function excluirNegociacao(oppId: string): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
   const { error } = await db.from('opportunities').delete().eq('id', oppId)
   if (error) return { ok: false, erro: error.message }
   recarregar()
@@ -179,6 +182,7 @@ export async function excluirNegociacao(oppId: string): Promise<Resultado> {
 /** Duplica a negociação: copia os campos do deal e os produtos, num card novo
     "(cópia)" na mesma etapa, Em andamento. */
 export async function duplicarNegociacao(oppId: string): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
   const { data: o, error } = await db.from('opportunities').select('*').eq('id', oppId).single()
   if (error || !o) return { ok: false, erro: error?.message ?? 'Negócio não encontrado.' }
 
@@ -249,7 +253,7 @@ async function inserirReuniaoNoDeal(
   if (p.moverEstagio) {
     const { data: opp } = await db.from('opportunities').select('stage').eq('id', oppId).single()
     if (opp && ['novo', 'primeiro_contato', 'qualificado'].includes(opp.stage as string)) {
-      await db.rpc('fn_move_stage', { p_opportunity_id: oppId, p_to_stage: 'reuniao_agendada', p_actor: null, p_actor_type: 'user', p_reason: null, p_meta: {} })
+      await db.rpc('fn_move_stage', { p_opportunity_id: oppId, p_to_stage: 'reuniao_agendada', p_actor: (await requireActiveUser()).id, p_actor_type: 'user', p_reason: null, p_meta: {} })
     }
   }
   return { ok: true }
@@ -259,6 +263,7 @@ export async function agendarReuniao(
   oppId: string,
   dados: { kind: string; quando: string }
 ): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
   const inicio = new Date(dados.quando)
   const { data: opp } = await db
     .from('opportunities')
@@ -297,6 +302,10 @@ export async function criarReuniaoAgenda(dados: {
   convidados?: string[]
   comMeet?: boolean
 }): Promise<Resultado> {
+  if (dados.oppId) await requireOpportunityAccess(dados.oppId)
+  else await requireManager()
+  if (!Number.isInteger(dados.duracaoMin) || dados.duracaoMin < 5 || dados.duracaoMin > 480) return { ok: false, erro: 'Duração deve ser de 5 a 480 minutos.' }
+  if (dados.convidados && (dados.convidados.length > 30 || dados.convidados.some(email => typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)))) return { ok: false, erro: 'Convidados inválidos.' }
   if (!dados.titulo.trim()) return { ok: false, erro: 'Informe o título da reunião.' }
   const inicio = new Date(`${dados.dia}T${dados.hora}:00-03:00`) // BRT fixo
   if (isNaN(inicio.getTime())) return { ok: false, erro: 'Data ou hora inválida.' }
@@ -335,6 +344,8 @@ export async function marcarReuniao(
   meetingId: string,
   status: 'realizada' | 'no_show' | 'cancelada'
 ): Promise<Resultado> {
+  await requireMeetingAccess(meetingId)
+  if (!['realizada', 'no_show', 'cancelada'].includes(status)) return { ok: false, erro: 'Status inválido.' }
   const { data: m, error } = await db
     .from('meetings')
     .update({ status, attended_at: status === 'realizada' ? new Date().toISOString() : null })
@@ -352,7 +363,7 @@ export async function marcarReuniao(
     await db.rpc('fn_move_stage', {
       p_opportunity_id: m.opportunity_id,
       p_to_stage: 'apresentacao_institucional',
-      p_actor: null,
+      p_actor: (await requireActiveUser()).id,
       p_actor_type: 'user',
       p_reason: null,
       p_meta: {},
@@ -365,6 +376,7 @@ export async function marcarReuniao(
 /** Exclui um evento da Agenda: remove do Google Calendar e, se estiver
     vinculado a um deal, marca a reunião como cancelada. */
 export async function excluirEventoAgenda(eventId: string): Promise<Resultado> {
+  await requireCalendarEventAccess(eventId)
   if (!eventId) return { ok: false, erro: 'Evento inválido.' }
   try { await cancelarEvento(eventId) } catch (e) { return { ok: false, erro: (e as Error).message } }
   await db.from('meetings').update({ status: 'cancelada' }).eq('external_event_id', eventId)
@@ -385,7 +397,11 @@ export async function atualizarNegocio(
     owner_id?: string | null
   }
 ): Promise<Resultado> {
-  const { error } = await db.from('opportunities').update(dados).eq('id', oppId)
+  await requireOpportunityAccess(oppId)
+  const patch = allowedPatch(dados, ['title', 'qualificacao', 'source', 'campaign', 'creative', 'product', 'owner_id'])
+  if (patch.qualificacao !== undefined && (typeof patch.qualificacao !== 'number' || !Number.isInteger(patch.qualificacao) || patch.qualificacao < 0 || patch.qualificacao > 5)) return { ok: false, erro: 'Qualificação inválida.' }
+  if (Object.hasOwn(patch, 'owner_id')) await requireManager()
+  const { error } = await db.from('opportunities').update(patch).eq('id', oppId)
   if (error) return { ok: false, erro: error.message }
   recarregar(oppId)
   return { ok: true }
@@ -397,7 +413,11 @@ export async function atualizarContato(
   oppId: string,
   dados: { full_name?: string; phone_primary?: string | null; email_primary?: string | null }
 ): Promise<Resultado> {
-  const { error } = await db.from('people').update(dados).eq('id', personId)
+  await requireOpportunityAccess(oppId)
+  const { opportunity } = await requireOpportunityAccess(oppId)
+  if (opportunity.person_id !== personId) return { ok: false, erro: 'Contato não pertence ao negócio.' }
+  const patch = allowedPatch(dados, ['full_name', 'phone_primary', 'email_primary'])
+  const { error } = await db.from('people').update(patch).eq('id', personId)
   if (error) return { ok: false, erro: error.message }
   recarregar(oppId)
   return { ok: true }
@@ -409,7 +429,11 @@ export async function atualizarEmpresa(
   oppId: string,
   dados: { trade_name?: string; cnpj?: string | null; address?: string | null; website?: string | null; segment?: string | null }
 ): Promise<Resultado> {
-  const { error } = await db.from('companies').update(dados).eq('id', companyId)
+  await requireOpportunityAccess(oppId)
+  const { opportunity } = await requireOpportunityAccess(oppId)
+  if (opportunity.company_id !== companyId) return { ok: false, erro: 'Empresa não pertence ao negócio.' }
+  const patch = allowedPatch(dados, ['trade_name', 'cnpj', 'address', 'website', 'segment'])
+  const { error } = await db.from('companies').update(patch).eq('id', companyId)
   if (error) return { ok: false, erro: error.message }
   recarregar(oppId)
   return { ok: true }
@@ -421,6 +445,9 @@ export async function criarEmpresaNoDeal(
   personId: string,
   dados: { trade_name: string; cnpj?: string | null; address?: string | null; website?: string | null; segment?: string | null }
 ): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
+  const { opportunity } = await requireOpportunityAccess(oppId)
+  if (opportunity.person_id !== personId) return { ok: false, erro: 'Contato não pertence ao negócio.' }
   const { data: comp, error } = await db
     .from('companies')
     .insert({ trade_name: dados.trade_name, cnpj: dados.cnpj || null, address: dados.address || null, website: dados.website || null, segment: dados.segment || null })
@@ -436,6 +463,7 @@ export async function criarEmpresaNoDeal(
 
 /** Desvincula a empresa do deal (não apaga a empresa). */
 export async function desvincularEmpresa(oppId: string): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
   const { error } = await db.from('opportunities').update({ company_id: null }).eq('id', oppId)
   if (error) return { ok: false, erro: error.message }
   recarregar(oppId)
@@ -443,7 +471,11 @@ export async function desvincularEmpresa(oppId: string): Promise<Resultado> {
 }
 
 export async function criarLead(payload: Record<string, unknown>): Promise<Resultado> {
-  const { error } = await db.rpc('fn_ingest_lead', { p_payload: payload })
+  const user = await requireActiveUser()
+  if (await integrationRateLimit(`manual-lead:${user.id}`, 60)) return { ok: false, erro: 'Cadastro temporariamente limitado. Tente novamente em um minuto.' }
+  const safePayload = allowedPatch(payload, ['name', 'phone', 'email', 'company_name', 'product', 'expected_value', 'channel', 'utm_source'])
+  if (typeof safePayload.name !== 'string' || !safePayload.name.trim() || typeof safePayload.phone !== 'string' || !safePayload.phone.trim()) return { ok: false, erro: 'Informe nome e telefone.' }
+  const { error } = await db.rpc('fn_create_lead_for_user', { p_payload: safePayload, p_user_id: user.id })
   if (error) return { ok: false, erro: error.message }
   recarregar()
   return { ok: true }
@@ -453,15 +485,18 @@ export async function criarLead(payload: Record<string, unknown>): Promise<Resul
 
 /** Anotação livre dentro do deal. */
 export async function adicionarNota(oppId: string, body: string): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
+  if (typeof body !== 'string' || body.length > 20000) return { ok: false, erro: 'Anotação inválida ou muito longa.' }
   if (!body.trim()) return { ok: false, erro: 'A anotação está vazia.' }
-  const { error } = await db.from('notes').insert({ opportunity_id: oppId, body: body.trim() })
+  const { error } = await db.from('notes').insert({ opportunity_id: oppId, body: body.trim(), author_id: (await requireActiveUser()).id })
   if (error) return { ok: false, erro: error.message }
   recarregar(oppId)
   return { ok: true }
 }
 
 export async function removerNota(id: number, oppId: string): Promise<Resultado> {
-  const { error } = await db.from('notes').delete().eq('id', id)
+  await requireOpportunityAccess(oppId)
+  const { error } = await db.from('notes').delete().eq('id', id).eq('opportunity_id', oppId)
   if (error) return { ok: false, erro: error.message }
   recarregar(oppId)
   return { ok: true }
@@ -496,6 +531,7 @@ export async function adicionarTarefa(
     concluida?: boolean
   }
 ): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
   if (!dados.title.trim()) return { ok: false, erro: 'Informe o assunto da tarefa.' }
 
   const due = dados.date ? new Date(`${dados.date}T${dados.time || '09:00'}`).toISOString() : null
@@ -516,10 +552,12 @@ export async function adicionarTarefa(
 }
 
 export async function alternarTarefa(id: number, oppId: string, concluir: boolean): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
   const { error } = await db
     .from('tasks')
     .update({ done_at: concluir ? new Date().toISOString() : null })
     .eq('id', id)
+    .eq('opportunity_id', oppId)
   if (error) return { ok: false, erro: error.message }
   await sincronizarProximaAcao(oppId)
   recarregar(oppId)
@@ -528,9 +566,12 @@ export async function alternarTarefa(id: number, oppId: string, concluir: boolea
 
 /** Anexa a proposta como documento (arquivo no Storage) — versão automática. */
 export async function subirProposta(oppId: string, form: FormData): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
   const file = form.get('file') as File | null
-  if (!file || file.size === 0) return { ok: false, erro: 'Selecione o documento da proposta.' }
+  if (!(file instanceof File) || file.size === 0) return { ok: false, erro: 'Selecione o documento da proposta.' }
   if (file.size > 25 * 1024 * 1024) return { ok: false, erro: 'Arquivo acima de 25 MB.' }
+  let mime: string
+  try { mime = await validateUpload(file) } catch (e) { return { ok: false, erro: (e as Error).message } }
 
   const { data: ultima } = await db
     .from('proposals')
@@ -545,7 +586,7 @@ export async function subirProposta(oppId: string, form: FormData): Promise<Resu
 
   const { error: upErr } = await db.storage
     .from('deal-files')
-    .upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false })
+    .upload(path, file, { contentType: mime, upsert: false })
   if (upErr) return { ok: false, erro: upErr.message }
 
   const { error } = await db.from('proposals').insert({
@@ -555,7 +596,7 @@ export async function subirProposta(oppId: string, form: FormData): Promise<Resu
     sent_at: new Date().toISOString(),
     file_name: file.name,
     file_path: path,
-    file_mime: file.type,
+    file_mime: mime,
     file_size: file.size,
   })
   if (error) return { ok: false, erro: error.message }
@@ -563,19 +604,29 @@ export async function subirProposta(oppId: string, form: FormData): Promise<Resu
   return { ok: true }
 }
 
-export async function removerProposta(id: string, oppId: string, path?: string | null): Promise<Resultado> {
-  if (path) await db.storage.from('deal-files').remove([path])
-  const { error } = await db.from('proposals').delete().eq('id', id)
+export async function removerProposta(id: string, oppId: string, _path?: string | null): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
+  void _path // Caminho legado do cliente é ignorado.
+  const { data: record, error: lookupError } = await db.from('proposals').select('file_path').eq('id', id).eq('opportunity_id', oppId).maybeSingle()
+  if (lookupError || !record) return { ok: false, erro: 'Proposta indisponível.' }
+  if (record.file_path) {
+    const { error } = await db.storage.from('deal-files').remove([record.file_path])
+    if (error) return { ok: false, erro: 'Não foi possível remover o arquivo.' }
+  }
+  const { error } = await db.from('proposals').delete().eq('id', id).eq('opportunity_id', oppId)
   if (error) return { ok: false, erro: error.message }
   recarregar(oppId)
   return { ok: true }
 }
 
 export async function definirStatusProposta(id: string, oppId: string, status: string): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
+  if (!['rascunho', 'enviada', 'aceita', 'recusada'].includes(status)) return { ok: false, erro: 'Status inválido.' }
   const { error } = await db
     .from('proposals')
     .update({ status, decided_at: ['aceita', 'recusada'].includes(status) ? new Date().toISOString() : null })
     .eq('id', id)
+    .eq('opportunity_id', oppId)
   if (error) return { ok: false, erro: error.message }
   recarregar(oppId)
   return { ok: true }
@@ -604,6 +655,7 @@ export async function adicionarProduto(
   oppId: string,
   dados: { productId: number; quantity: number; unitValue: number; recurrence: string; discount: number }
 ): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
   const { error } = await db.from('opportunity_products').insert({
     opportunity_id: oppId,
     product_id: dados.productId,
@@ -619,7 +671,8 @@ export async function adicionarProduto(
 }
 
 export async function removerProduto(id: number, oppId: string): Promise<Resultado> {
-  const { error } = await db.from('opportunity_products').delete().eq('id', id)
+  await requireOpportunityAccess(oppId)
+  const { error } = await db.from('opportunity_products').delete().eq('id', id).eq('opportunity_id', oppId)
   if (error) return { ok: false, erro: error.message }
   await recomputarValores(oppId)
   recarregar(oppId)
@@ -628,23 +681,26 @@ export async function removerProduto(id: number, oppId: string): Promise<Resulta
 
 /** Upload de arquivo do deal → Supabase Storage (bucket privado) + metadado. */
 export async function subirArquivo(oppId: string, form: FormData): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
   const file = form.get('file') as File | null
-  if (!file || file.size === 0) return { ok: false, erro: 'Selecione um arquivo.' }
+  if (!(file instanceof File) || file.size === 0) return { ok: false, erro: 'Selecione um arquivo.' }
   if (file.size > 25 * 1024 * 1024) return { ok: false, erro: 'Arquivo acima de 25 MB.' }
+  let mime: string
+  try { mime = await validateUpload(file) } catch (e) { return { ok: false, erro: (e as Error).message } }
 
   const safe = file.name.replace(/[^\w.\-]+/g, '_')
   const path = `${oppId}/${Date.now()}_${safe}`
 
   const { error: upErr } = await db.storage
     .from('deal-files')
-    .upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false })
+    .upload(path, file, { contentType: mime, upsert: false })
   if (upErr) return { ok: false, erro: upErr.message }
 
   const { error } = await db.from('deal_files').insert({
     opportunity_id: oppId,
     name: file.name,
     path,
-    mime: file.type,
+    mime,
     size: file.size,
   })
   if (error) return { ok: false, erro: error.message }
@@ -652,9 +708,14 @@ export async function subirArquivo(oppId: string, form: FormData): Promise<Resul
   return { ok: true }
 }
 
-export async function removerArquivo(id: number, oppId: string, path: string): Promise<Resultado> {
-  await db.storage.from('deal-files').remove([path])
-  const { error } = await db.from('deal_files').delete().eq('id', id)
+export async function removerArquivo(id: number, oppId: string, _path: string): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
+  void _path // Caminho legado do cliente é ignorado.
+  const { data: record, error: lookupError } = await db.from('deal_files').select('path').eq('id', id).eq('opportunity_id', oppId).maybeSingle()
+  if (lookupError || !record) return { ok: false, erro: 'Arquivo indisponível.' }
+  const { error: storageError } = await db.storage.from('deal-files').remove([record.path])
+  if (storageError) return { ok: false, erro: 'Não foi possível remover o arquivo.' }
+  const { error } = await db.from('deal_files').delete().eq('id', id).eq('opportunity_id', oppId)
   if (error) return { ok: false, erro: error.message }
   recarregar(oppId)
   return { ok: true }
@@ -685,6 +746,7 @@ export type ContextoDeal = {
 }
 
 export async function contextoDeal(oppId: string): Promise<ContextoDeal | null> {
+  await requireOpportunityAccess(oppId)
   const [oppRes, prodRes, catRes, notasRes, usuariosRes] = await Promise.all([
     db.from('opportunities')
       .select(`
@@ -734,6 +796,7 @@ export async function contextoDeal(oppId: string): Promise<ContextoDeal | null> 
 
 /* ---- Agenda (Google Calendar) ---- */
 export async function desconectarAgenda(): Promise<Resultado> {
+  await requireAdmin()
   try {
     await desconectar()
   } catch (e) {
@@ -754,6 +817,7 @@ function recarregarEtapas() {
 export async function salvarEtapas(
   itens: { stage: string; label: string; color: string; sort_order: number }[]
 ): Promise<Resultado> {
+  await requireManager()
   for (const it of itens) {
     if (!it.label.trim()) return { ok: false, erro: 'O nome da etapa não pode ficar vazio.' }
     const { error } = await db
@@ -782,6 +846,7 @@ async function slugEtapa(nome: string): Promise<string> {
 /** Cria uma etapa nova como coluna do kanban. Agora que `stage` é texto,
     isso é só um insert — sem DDL. Entra logo após `aposStage` (ou no fim). */
 export async function adicionarEtapa(dados: { nome: string; cor: string; aposStage?: string | null }): Promise<Resultado> {
+  await requireManager()
   if (!dados.nome.trim()) return { ok: false, erro: 'Informe o nome da etapa.' }
 
   const { data: linhas } = await db
@@ -815,6 +880,7 @@ export async function adicionarEtapa(dados: { nome: string; cor: string; aposSta
 /** Remove uma etapa. Bloqueia se houver negócios nela ou se for terminal
     (ganho/perdido/nutrição), que sustentam regras do funil e métricas. */
 export async function removerEtapa(stage: string): Promise<Resultado> {
+  await requireManager()
   const { data: st } = await db.from('pipeline_stages').select('won, lost, nurture').eq('stage', stage).maybeSingle()
   if (!st) return { ok: false, erro: 'Etapa não encontrada.' }
   if (st.won || st.lost || st.nurture) return { ok: false, erro: 'Etapas de Ganho, Perdido e Nutrição não podem ser removidas.' }
@@ -844,6 +910,10 @@ async function contatoDoDeal(oppId: string): Promise<{ telefone: string; nome: s
 }
 
 export async function responderConversa(oppId: string, mensagem: string): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
+  const user = await requireActiveUser()
+  if (await integrationRateLimit(`send-whatsapp:${user.id}`, 60)) return { ok: false, erro: 'Envio temporariamente limitado. Tente novamente em um minuto.' }
+  if (typeof mensagem !== 'string' || mensagem.length > 10000) return { ok: false, erro: 'Mensagem inválida ou acima de 10.000 caracteres.' }
   if (!mensagem.trim()) return { ok: false, erro: 'Mensagem vazia.' }
   const c = await contatoDoDeal(oppId)
   if (!c) return { ok: false, erro: 'Lead sem telefone.' }
@@ -858,6 +928,7 @@ export async function responderConversa(oppId: string, mensagem: string): Promis
 
   await db.rpc('fn_log_activity', {
     p_opportunity_id: oppId, p_kind: 'whatsapp', p_direction: 'outbound',
+    p_actor: (await requireActiveUser()).id,
     p_body: mensagem.trim(), p_is_automated: false, p_outcome: 'enviado',
     // guarda o messageId → o eco (fromMe) correlaciona e aprende o LID
     p_meta: messageId ? { messageId } : {},
@@ -868,6 +939,7 @@ export async function responderConversa(oppId: string, mensagem: string): Promis
 
 /** Assumir a conversa (intervenção humana — a Naia para de responder). */
 export async function definirAtendimento(oppId: string, humano: boolean): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
   if (!humano) return { ok: true } // não há "devolver": trava é permanente
   const c = await contatoDoDeal(oppId)
   if (!c) return { ok: false, erro: 'Lead sem telefone.' }

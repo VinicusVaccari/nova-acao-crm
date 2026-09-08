@@ -3,12 +3,13 @@
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
+import { safeRedirect } from '@/lib/security/policy'
 import { IconeAlerta } from '@/components/icones'
 
 export function FormularioLogin() {
   const router = useRouter()
   const params = useSearchParams()
-  const destino = params.get('destino') || '/'
+  const destino = safeRedirect(params.get('destino'))
 
   const [erro, setErro] = useState<string | null>(null)
   const [carregando, setCarregando] = useState(false)

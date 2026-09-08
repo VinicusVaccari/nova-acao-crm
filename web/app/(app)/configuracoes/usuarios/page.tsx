@@ -1,9 +1,11 @@
+import { requireManager } from '@/lib/security/authorization'
 import { db } from '@/lib/db'
 import { UsuariosAdmin } from '@/components/config/usuarios-admin'
 
 export const dynamic = 'force-dynamic'
 
 export default async function UsuariosPage() {
+  await requireManager()
   const [usuariosRes, equipesRes, convitesRes] = await Promise.all([
     db.from('profiles')
       .select('id, full_name, email, role, is_active, lead_capacity, team_id, avatar_url')

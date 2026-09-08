@@ -102,12 +102,6 @@ export const IconeSair = (p: P) => (
   </svg>
 )
 
-export const IconeTema = (p: P) => (
-  <svg {...base} {...p}>
-    <path d="M10 2.5a7.5 7.5 0 1 0 7.5 7.5A5.6 5.6 0 0 1 10 2.5Z" />
-  </svg>
-)
-
 export const IconeRecolher = (p: P) => (
   <svg {...base} {...p}>
     <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />

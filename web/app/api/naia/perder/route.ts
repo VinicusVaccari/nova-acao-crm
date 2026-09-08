@@ -1,6 +1,7 @@
+import { integrationAuthorized, readBoundedJson, integrationRateLimit } from '@/lib/security/integration'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { marcarPerdido } from '@/lib/actions'
+import { registrarPerdaAutorizada } from '@/lib/negociacao-service'
 
 /* -----------------------------------------------------------------
    Marca um deal como PERDIDO (modelo de status: grava lost_at + lost_reason,
@@ -14,9 +15,7 @@ import { marcarPerdido } from '@/lib/actions'
 export const dynamic = 'force-dynamic'
 
 function autorizado(req: Request): boolean {
-  const esperado = process.env.NAIA_API_SECRET || process.env.WHATSAPP_WEBHOOK_SECRET
-  if (!esperado) return true
-  return new URL(req.url).searchParams.get('secret') === esperado
+  return integrationAuthorized(req, process.env.NAIA_API_SECRET)
 }
 
 /** Acha o deal SEM criar nada (por opportunityId, ou deal aberto da pessoa). */
@@ -40,9 +39,11 @@ async function acharOpp(opportunityId?: string, phone?: string): Promise<string 
 
 export async function POST(req: Request) {
   if (!autorizado(req)) return NextResponse.json({ ok: false, erro: 'não autorizado' }, { status: 401 })
+  const limited = await integrationRateLimit('web/app/api/naia/perder/route.ts')
+  if (limited) return limited
 
   let body: Record<string, unknown>
-  try { body = await req.json() } catch { return NextResponse.json({ ok: false, erro: 'json inválido' }, { status: 400 }) }
+  try { body = await readBoundedJson(req) } catch { return NextResponse.json({ ok: false, erro: 'json inválido' }, { status: 400 }) }
 
   const oppId = await acharOpp(body.opportunityId as string | undefined, body.phone as string | undefined)
   if (!oppId) return NextResponse.json({ ok: false, erro: 'deal não encontrado (este endpoint não cria deal)' }, { status: 404 })
@@ -53,9 +54,9 @@ export async function POST(req: Request) {
   const { data: mr } = await db.from('lost_reasons').select('code').eq('code', motivo).maybeSingle()
   if (!mr) return NextResponse.json({ ok: false, erro: `motivo "${motivo}" não existe — crie em /api/naia/motivo-perda ou use um code válido` }, { status: 400 })
 
-  // reusa a mesma lógica da ficha: grava lost_at/lost_reason E registra na
-  // timeline (stage_history → aparece no Histórico). actorType 'ai' = Naia.
-  const r = await marcarPerdido(oppId, motivo, 'ai')
+  // A integração já foi autenticada acima. Não chamar uma Server Action
+  // que exige sessão de usuário. O ator da automação não vem do body.
+  const r = await registrarPerdaAutorizada(oppId, motivo, { tipo: 'ai' })
   if (!r.ok) return NextResponse.json({ ok: false, erro: r.erro }, { status: 500 })
 
   return NextResponse.json({ ok: true, opportunityId: oppId, status: 'perdido', motivo })

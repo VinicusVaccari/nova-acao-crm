@@ -1,10 +1,13 @@
+import { requireActiveUser } from '@/lib/security/authorization'
+import { userDatabase } from '@/lib/security/user-db'
+import { isManager } from '@/lib/security/policy'
 import { agendaConectada, listarEventos } from '@/lib/google'
-import { db } from '@/lib/db'
 import { AgendaSemana, AgendaConectar } from '@/components/agenda'
 
 export type NegocioOpcao = { id: string; nome: string }
 
 async function negociosAbertos(): Promise<NegocioOpcao[]> {
+  const db = await userDatabase()
   const { data } = await db
     .from('opportunities')
     .select('id, title, stage, people:person_id ( full_name )')
@@ -40,6 +43,7 @@ function segunda0(ymd: string): number {
 }
 
 export default async function AgendaPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
+  await requireActiveUser()
   const sp = await searchParams
   const { conectada, email } = await agendaConectada()
 
@@ -47,12 +51,20 @@ export default async function AgendaPage({ searchParams }: { searchParams: Promi
   const segunda = addDias(base, -segunda0(base))
   const dias = Array.from({ length: 7 }, (_, i) => addDias(segunda, i))
 
-  const [eventos, negocios] = conectada
+  const [eventosBrutos, negocios] = conectada
     ? await Promise.all([
         listarEventos(`${segunda}T00:00:00-03:00`, `${addDias(segunda, 7)}T00:00:00-03:00`),
         negociosAbertos(),
       ])
     : [[], []]
+  let eventos = eventosBrutos
+  const user = await requireActiveUser()
+  if (!isManager(user)) {
+    const db = await userDatabase()
+    const { data: meetings } = await db.from('meetings').select('external_event_id').not('external_event_id', 'is', null)
+    const allowed = new Set((meetings ?? []).map(m => m.external_event_id))
+    eventos = eventosBrutos.filter(event => allowed.has(event.id))
+  }
 
   // e-mails dos colaboradores mais usados — sugestões ao convidar (lista fixa)
   const colaboradores = [

@@ -13,3 +13,13 @@ docs/
 
 # documentação Markdown mantida somente no ambiente local
 *.md
+
+# Ensaios e backups locais podem conter dados pessoais e credenciais.
+.security-local/
+supabase/.temp/
+
+# Exportações de CRM: dados reais de clientes, nunca versionar.
+*.csv
+
+# Configuração local do assistente.
+.claude/

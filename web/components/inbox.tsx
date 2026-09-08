@@ -5,8 +5,8 @@ import Link from 'next/link'
 import { Avatar } from '@/components/ui'
 import { useEstagiosBoard, useCorEstagio } from '@/components/estagios-context'
 import { brlCurto } from '@/lib/format'
-import { adicionarNota, adicionarProduto, adicionarTarefa, atualizarContato, atualizarNegocio, contextoDeal, definirAtendimento, listarConversas, moverEstagio, removerProduto, responderConversa, type ContextoDeal } from '@/lib/actions'
-import type { Conversa } from '@/lib/mensagens'
+import { adicionarNota, adicionarProduto, adicionarTarefa, atualizarContato, atualizarNegocio, contextoDeal, definirAtendimento, listarConversas, listarMensagens, moverEstagio, removerProduto, responderConversa, type ContextoDeal } from '@/lib/actions'
+import type { Conversa, Mensagem } from '@/lib/mensagens'
 
 const hora = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
 
@@ -150,6 +150,14 @@ function statusConversa(c: Conversa): keyof typeof badgesStatus {
   return 'naia'
 }
 
+/* Mensagem já carregada não é substituída: a URL assinada do áudio muda a
+   cada consulta, e trocá-la reiniciaria o player no meio da reprodução. */
+function mesclar(atuais: Mensagem[], novas: Mensagem[]): Mensagem[] {
+  const porId = new Map(atuais.map(m => [m.id, m]))
+  for (const m of novas) if (!porId.has(m.id)) porId.set(m.id, m)
+  return [...porId.values()].sort((a, b) => a.at.localeCompare(b.at) || a.id - b.id)
+}
+
 export function Inbox({ conversas, selInicial }: { conversas: Conversa[]; selInicial?: string | null }) {
   const [convs, setConvs] = useState<Conversa[]>(conversas)
   const [selId, setSelId] = useState<string | null>(
@@ -160,21 +168,75 @@ export function Inbox({ conversas, selInicial }: { conversas: Conversa[]; selIni
   const [, startTop] = useTransition()
   const fioRef = useRef<HTMLDivElement>(null)
 
-  const recarregar = async () => { try { setConvs(await listarConversas()) } catch { /* próximo tick */ } }
+  // fio da conversa aberta: carregado sob demanda, do mais novo para trás
+  const [mensagens, setMensagens] = useState<Mensagem[]>([])
+  const [temMais, setTemMais] = useState(false)
+  const [carregando, setCarregando] = useState(true)
 
-  // atualiza sozinho: recarrega as conversas a cada 2s (só com a aba visível)
+  const recarregar = async () => {
+    try {
+      const [frescas, fio] = await Promise.all([
+        listarConversas(),
+        selId ? listarMensagens(selId) : Promise.resolve(null),
+      ])
+      setConvs(frescas)
+      if (fio) { setMensagens(prev => mesclar(prev, fio.mensagens)); setTemMais(m => m || fio.temMais) }
+    } catch { /* próximo tick */ }
+  }
+
+  /* Trocar de conversa zera o fio já na renderização. Limpar dentro do efeito
+     pintaria a conversa nova com as mensagens da anterior por um quadro. */
+  const [fioDe, setFioDe] = useState(selId)
+  if (fioDe !== selId) {
+    setFioDe(selId)
+    setMensagens([])
+    setTemMais(false)
+    setCarregando(!!selId)
+  }
+
+  // e o efeito só busca a página mais recente da conversa aberta
+  useEffect(() => {
+    if (!selId) return
+    let ativo = true
+    listarMensagens(selId)
+      .then(r => { if (!ativo) return; setMensagens(r.mensagens); setTemMais(r.temMais) })
+      .catch(() => { /* o polling tenta de novo */ })
+      .finally(() => { if (ativo) setCarregando(false) })
+    return () => { ativo = false }
+  }, [selId])
+
+  // atualiza sozinho a cada 2s (só com a aba visível): a lista de conversas
+  // e as mensagens novas da conversa aberta
   useEffect(() => {
     let ativo = true
     const tick = async () => {
       if (typeof document !== 'undefined' && document.hidden) return
-      try { const fresh = await listarConversas(); if (ativo) setConvs(fresh) } catch { /* rede — tenta no próximo tick */ }
+      try {
+        const [frescas, fio] = await Promise.all([
+          listarConversas(),
+          selId ? listarMensagens(selId) : Promise.resolve(null),
+        ])
+        if (!ativo) return
+        setConvs(frescas)
+        if (fio) setMensagens(prev => mesclar(prev, fio.mensagens))
+      } catch { /* rede — tenta no próximo tick */ }
     }
     const id = setInterval(tick, 2000)
     // recarrega na hora quando a aba volta a ficar visível (sem esperar o tick)
     const onVis = () => { if (typeof document !== 'undefined' && !document.hidden) void tick() }
     document.addEventListener('visibilitychange', onVis)
     return () => { ativo = false; clearInterval(id); document.removeEventListener('visibilitychange', onVis) }
-  }, [])
+  }, [selId])
+
+  const carregarAnteriores = () => {
+    const maisAntiga = mensagens[0]
+    if (!selId || !maisAntiga || carregando) return
+    setCarregando(true)
+    listarMensagens(selId, maisAntiga.at)
+      .then(r => { setMensagens(prev => mesclar(prev, r.mensagens)); setTemMais(r.temMais) })
+      .catch(() => { /* mantém o que já está na tela */ })
+      .finally(() => setCarregando(false))
+  }
 
   // assumir a conversa (trava permanente — a Naia não volta pra esse lead)
   const assumir = (c: Conversa) =>
@@ -186,11 +248,13 @@ export function Inbox({ conversas, selInicial }: { conversas: Conversa[]; selIni
 
   const sel = convs.find(c => c.oppId === selId) ?? null
 
-  // rola pro fim quando entram mensagens novas ou troca de conversa
+  // rola pro fim quando chega mensagem nova ou troca de conversa. Depende do
+  // id da ÚLTIMA mensagem: carregar histórico antigo não puxa a tela pra baixo.
+  const ultimaId = mensagens[mensagens.length - 1]?.id
   useEffect(() => {
     const el = fioRef.current
     if (el) el.scrollTo({ top: el.scrollHeight })
-  }, [selId, sel?.mensagens.length])
+  }, [selId, ultimaId])
 
   return (
     <div className={`inbox${ctx ? '' : ' inbox--sem-ctx'}`}>
@@ -256,7 +320,22 @@ export function Inbox({ conversas, selInicial }: { conversas: Conversa[]; selIni
             </div>
 
             <div ref={fioRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 'var(--s-5)', display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
-              {sel.mensagens.map(m => {
+              {temMais && (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  style={{ alignSelf: 'center', marginBottom: 'var(--s-2)' }}
+                  onClick={carregarAnteriores}
+                  disabled={carregando}
+                >
+                  {carregando ? 'Carregando…' : 'Carregar mensagens anteriores'}
+                </button>
+              )}
+              {!temMais && mensagens.length === 0 && (
+                <p className="t-sm muted" style={{ alignSelf: 'center' }}>
+                  {carregando ? 'Carregando mensagens…' : 'Nenhuma mensagem nesta conversa.'}
+                </p>
+              )}
+              {mensagens.map(m => {
                 const tipo = m.direction === 'inbound' ? 'lead' : m.automatizada ? 'naia' : 'humano'
                 return (
                   <div key={m.id} style={{ display: 'flex', flexDirection: 'column', alignItems: tipo === 'lead' ? 'flex-start' : 'flex-end' }}>

@@ -1,3 +1,4 @@
+import { integrationAuthorized, readBoundedJson, integrationRateLimit } from '@/lib/security/integration'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -25,13 +26,15 @@ export async function OPTIONS() {
 
 export async function POST(req: Request) {
   const chave = process.env.INGEST_API_KEY
-  if (chave && req.headers.get('x-api-key') !== chave) {
+  if (!integrationAuthorized(req, chave)) {
     return NextResponse.json({ erro: 'chave inválida' }, { status: 401, headers: CORS })
   }
+  const limited = await integrationRateLimit('web/app/api/ingest/lead/route.ts')
+  if (limited) return limited
 
   let body: Record<string, unknown>
   try {
-    body = await req.json()
+    body = await readBoundedJson(req)
   } catch {
     return NextResponse.json({ erro: 'JSON inválido' }, { status: 400, headers: CORS })
   }

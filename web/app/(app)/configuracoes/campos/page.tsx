@@ -1,9 +1,11 @@
+import { requireManager } from '@/lib/security/authorization'
 import { db } from '@/lib/db'
 import { CamposAdmin } from '@/components/config/campos-admin'
 
 export const dynamic = 'force-dynamic'
 
 export default async function CamposPage() {
+  await requireManager()
   const { data } = await db
     .from('custom_fields')
     .select('id, entity, key, label, field_type, options, required, active')

@@ -1,5 +1,6 @@
 import 'server-only'
 import { createClient } from '@supabase/supabase-js'
+import { userDatabase } from './security/user-db'
 
 // Cliente de servidor. A service_role nunca sai daqui — não existe
 // import deste módulo em componente de cliente (o 'server-only' acima
@@ -13,6 +14,7 @@ export const db = createClient(
 export type Periodo = { de: string; ate: string }
 
 export function periodo(dias = 30): Periodo {
+  dias = Number.isFinite(dias) ? Math.min(366, Math.max(1, Math.floor(dias))) : 30
   const ate = new Date()
   const de = new Date(ate)
   de.setDate(de.getDate() - (dias - 1))
@@ -27,6 +29,11 @@ export type DashComercial = {
   qualificados: number
   tx_qualificacao: number
   agendamentos: number
+  diagnosticos: number
+  qualificados_por_avanco: number
+  agendados_por_avanco: number
+  diagnosticos_por_avanco: number
+  propostas_por_avanco: number
   tx_agendamento: number
   reunioes_realizadas: number
   reunioes_no_show: number
@@ -48,6 +55,7 @@ export type DashComercial = {
 }
 
 export async function dashComercial(p: Periodo): Promise<DashComercial> {
+  const db = await userDatabase()
   const { data, error } = await db.rpc('fn_dash_comercial', {
     p_from: p.de,
     p_to: p.ate,
@@ -57,6 +65,7 @@ export async function dashComercial(p: Periodo): Promise<DashComercial> {
 }
 
 export async function funnelSeries(p: Periodo, grain: 'day' | 'week' | 'month' = 'week') {
+  const db = await userDatabase()
   const { data, error } = await db.rpc('fn_funnel_series', {
     p_from: p.de,
     p_to: p.ate,

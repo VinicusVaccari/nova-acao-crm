@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useState, useTransition } from 'react'
+import Link from 'next/link'
 import {
   adicionarNota, removerNota,
   adicionarTarefa, alternarTarefa,
@@ -41,7 +42,7 @@ type Dados = {
   negNome: string
   empresaNome?: string
   usuarios: { id: string; full_name: string }[]
-  atividades: any[]; historico: any[]; reunioes: any[]; propostas: any[]
+  atividades: any[]; atividadesTruncadas?: boolean; historico: any[]; reunioes: any[]; propostas: any[]
   notas: any[]; tarefas: any[]; produtos: any[]; catalogo: any[]; arquivos: any[]
 }
 
@@ -177,6 +178,12 @@ function Historico({ d }: { d: Dados }) {
           </div>
         </div>
       ))}
+      {d.atividadesTruncadas && (
+        <p className="t-sm muted" style={{ paddingTop: 'var(--s-3)' }}>
+          Esta linha do tempo mostra os registros mais recentes. O histórico completo da
+          conversa está em <Link href={`/mensagens?conversa=${d.oppId}`}>Mensagens</Link>.
+        </p>
+      )}
     </div>
   )
 }

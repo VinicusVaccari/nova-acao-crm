@@ -53,6 +53,7 @@ type TokenResp = {
 /** Troca o `code` do callback pelos tokens. */
 export async function trocarCodigo(code: string, redirectUri: string): Promise<TokenResp> {
   const res = await fetch(TOKEN_URL, {
+    signal: AbortSignal.timeout(15000),
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -145,6 +146,7 @@ async function tokenValido(force = false): Promise<{ token: string; calendarId: 
   if (!c.refresh_token) return null
 
   const res = await fetch(TOKEN_URL, {
+    signal: AbortSignal.timeout(15000),
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -170,6 +172,7 @@ async function tokenValido(force = false): Promise<{ token: string; calendarId: 
 async function calFetch(path: string, init: RequestInit, token: string) {
   return fetch(`${CAL}${path}`, {
     ...init,
+    signal: AbortSignal.timeout(15000),
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(init.headers ?? {}) },
   })
 }
@@ -239,7 +242,7 @@ export async function atualizarEvento(eventId: string, patch: Partial<NovoEvento
   if (patch.fimISO) body.end = { dateTime: patch.fimISO, timeZone: TIMEZONE }
 
   const res = await calAuth(
-    cid => `/calendars/${encodeURIComponent(cid)}/events/${eventId}?sendUpdates=all`,
+    cid => `/calendars/${encodeURIComponent(cid)}/events/${encodeURIComponent(eventId)}?sendUpdates=all`,
     { method: 'PATCH', body: JSON.stringify(body) },
   )
   if (!res) return false
@@ -249,7 +252,7 @@ export async function atualizarEvento(eventId: string, patch: Partial<NovoEvento
 
 export async function cancelarEvento(eventId: string): Promise<boolean> {
   const res = await calAuth(
-    cid => `/calendars/${encodeURIComponent(cid)}/events/${eventId}?sendUpdates=all`,
+    cid => `/calendars/${encodeURIComponent(cid)}/events/${encodeURIComponent(eventId)}?sendUpdates=all`,
     { method: 'DELETE' },
   )
   if (!res) return false
@@ -297,7 +300,7 @@ export async function reconciliarReunioes(reunioes: ReuniaoRow[]): Promise<Reuni
   await Promise.all(
     abertas.map(async m => {
       const res = await calAuth(
-        cid => `/calendars/${encodeURIComponent(cid)}/events/${m.external_event_id}`,
+        cid => `/calendars/${encodeURIComponent(cid)}/events/${encodeURIComponent(String(m.external_event_id))}`,
         { method: 'GET' },
       )
       if (!res) return

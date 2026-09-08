@@ -1,4 +1,6 @@
 import { db } from './db'
+import { userDatabase } from './security/user-db'
+import { requireOpportunityAccess } from './security/authorization'
 import { reconciliarReunioes } from './google'
 import type { CardPipeline } from './estagios'
 
@@ -7,6 +9,7 @@ export type { EstagioId, CardPipeline } from './estagios'
 
 /** Pipeline inteiro em uma consulta, já com pessoa, empresa, dono e próxima reunião. */
 export async function carregarPipeline(): Promise<CardPipeline[]> {
+  const db = await userDatabase()
   const { data, error } = await db
     .from('opportunities')
     .select(`
@@ -79,7 +82,10 @@ export async function carregarPipeline(): Promise<CardPipeline[]> {
 }
 
 /** A ficha completa: tudo que se sabe sobre um negócio, em uma tela. */
+const ATIVIDADES_FICHA = 200
+
 export async function carregarFicha(oppId: string) {
+  await requireOpportunityAccess(oppId)
   const { data: opp, error } = await db
     .from('opportunities')
     .select(`
@@ -101,7 +107,7 @@ export async function carregarFicha(oppId: string) {
 
   const [atividades, reunioes, propostas, historico, toques, objecoes, notas, tarefas, produtos, catalogo, arquivos, toqueAtribuido] =
     await Promise.all([
-      db.from('activities').select('*').eq('opportunity_id', oppId).order('occurred_at', { ascending: false }).limit(100),
+      db.from('activities').select('*').eq('opportunity_id', oppId).order('occurred_at', { ascending: false }).limit(ATIVIDADES_FICHA + 1),
       db.from('meetings').select('*').eq('opportunity_id', oppId).order('scheduled_at', { ascending: false }),
       db.from('proposals').select('*').eq('opportunity_id', oppId).order('version', { ascending: false }),
       db.from('stage_history').select('*, autor:changed_by(full_name)').eq('opportunity_id', oppId).order('changed_at', { ascending: true }),
@@ -126,9 +132,14 @@ export async function carregarFicha(oppId: string) {
     (propostas.data ?? []).map(async p => ({ ...p, url: p.file_path ? await assinar(p.file_path as string) : null }))
   )
 
+  // O histórico da ficha é a linha do tempo do negócio, não o chat: quando
+  // passa do teto, a tela avisa e manda pra Mensagens em vez de cortar calada.
+  const linhasAtividade = atividades.data ?? []
+
   return {
     opp,
-    atividades: atividades.data ?? [],
+    atividades: linhasAtividade.slice(0, ATIVIDADES_FICHA),
+    atividadesTruncadas: linhasAtividade.length > ATIVIDADES_FICHA,
     // sentido Google → sistema: se o evento foi apagado/remarcado no
     // Google, a reunião do deal reflete isso ao abrir a ficha.
     reunioes: await reconciliarReunioes(reunioes.data ?? []),

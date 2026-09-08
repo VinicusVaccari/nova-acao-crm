@@ -1,3 +1,4 @@
+import { integrationAuthorized, readBoundedJson, integrationRateLimit } from '@/lib/security/integration'
 import { NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
 import { db } from '@/lib/db'
@@ -13,9 +14,7 @@ import { db } from '@/lib/db'
 export const dynamic = 'force-dynamic'
 
 function autorizado(req: Request): boolean {
-  const esperado = process.env.NAIA_API_SECRET || process.env.WHATSAPP_WEBHOOK_SECRET
-  if (!esperado) return true
-  return new URL(req.url).searchParams.get('secret') === esperado
+  return integrationAuthorized(req, process.env.NAIA_API_SECRET)
 }
 
 /** Acha o deal SEM criar nada. Por opportunityId direto, ou pelo telefone
@@ -40,9 +39,11 @@ async function acharOpp(opportunityId?: string, phone?: string): Promise<string 
 
 export async function POST(req: Request) {
   if (!autorizado(req)) return NextResponse.json({ ok: false, erro: 'não autorizado' }, { status: 401 })
+  const limited = await integrationRateLimit('web/app/api/naia/estrelas/route.ts')
+  if (limited) return limited
 
   let body: Record<string, unknown>
-  try { body = await req.json() } catch { return NextResponse.json({ ok: false, erro: 'json inválido' }, { status: 400 }) }
+  try { body = await readBoundedJson(req) } catch { return NextResponse.json({ ok: false, erro: 'json inválido' }, { status: 400 }) }
 
   const oppId = await acharOpp(body.opportunityId as string | undefined, body.phone as string | undefined)
   if (!oppId) return NextResponse.json({ ok: false, erro: 'deal não encontrado (este endpoint não cria deal)' }, { status: 404 })

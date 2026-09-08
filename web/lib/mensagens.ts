@@ -1,8 +1,9 @@
 import { db } from './db'
+import { userDatabase } from './security/user-db'
 
-/* Conversas do inbox. Hoje lê as atividades de WhatsApp (o que a Naia e
-   o time registram) agrupadas por negócio. A lógica de envio e de
-   resposta automática entra na próxima etapa. */
+/* Conversas do inbox. A lista vem de v_conversas — um resumo por negócio,
+   agregado sobre o histórico inteiro. O fio de mensagens é carregado à
+   parte, paginado, só para a conversa aberta na tela. */
 
 export type Mensagem = {
   id: number
@@ -20,60 +21,77 @@ export type Conversa = {
   nome: string
   empresa: string | null
   telefone: string | null
-  stage: string
   ultimaAt: string
   ultima: string
-  quemAtende: 'lead' | 'naia' | 'humano'
   atendimento: 'naia' | 'humano'   // trava: 'humano' = travado, Naia não responde
   humanoRespondeu: boolean          // o time já respondeu por aqui?
-  mensagens: Mensagem[]
 }
 
+export const MENSAGENS_POR_PAGINA = 50
+
 export async function carregarConversas(): Promise<Conversa[]> {
-  const { data, error } = await db
-    .from('activities')
-    .select(`
-      id, occurred_at, direction, is_automated, body, outcome, kind, meta, opportunity_id,
-      people:person_id ( full_name, phone_primary ),
-      opportunities:opportunity_id ( stage, atendimento, companies:company_id ( trade_name ) )
-    `)
-    .in('kind', ['whatsapp', 'audio'])
-    .order('occurred_at', { ascending: false })
-    .limit(1000)
+  const userDb = await userDatabase()
+  const { data, error } = await userDb
+    .from('v_conversas')
+    .select('opportunity_id, nome, empresa, telefone, ultima_at, ultima, humano_respondeu')
+    .order('ultima_at', { ascending: false })
 
   if (error) throw new Error(`mensagens: ${error.message}`)
 
-  type Row = Record<string, unknown> & {
-    people?: { full_name?: string; phone_primary?: string } | null
-    opportunities?: { stage?: string; atendimento?: string; companies?: { trade_name?: string } | null } | null
+  const conversas: Conversa[] = (data ?? []).map(r => ({
+    oppId: r.opportunity_id as string,
+    nome: (r.nome as string) || 'Sem nome',
+    empresa: (r.empresa as string) ?? null,
+    telefone: (r.telefone as string) ?? null,
+    ultimaAt: r.ultima_at as string,
+    ultima: (r.ultima as string) ?? '',
+    atendimento: 'naia', // ajustado abaixo pela trava (v_trava_atual)
+    humanoRespondeu: !!r.humano_respondeu,
+  }))
+
+  // estado da trava (controlada pelo n8n na tabela de cadastro). Só os
+  // travados vêm — é uma minoria, e evita mandar a lista de telefones.
+  const { data: travas } = await db.from('v_trava_atual').select('phone').eq('travado', true)
+  const travados = new Set((travas ?? []).map(t => t.phone as string))
+  for (const c of conversas) {
+    if (travados.has((c.telefone ?? '').replace(/\D/g, ''))) c.atendimento = 'humano'
+  }
+  return conversas
+}
+
+/* O cursor volta do navegador. Aceita só o formato de timestamp do Postgres,
+   com a precisão original preservada — reserializar por Date perderia os
+   microssegundos e o corte da página sairia do lugar. */
+const CURSOR = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?([+-]\d{2}:?\d{2}|Z)?$/
+
+/** Fio de uma conversa, do mais antigo para o mais novo. `antesDe` é o
+    `at` da mensagem mais antiga já na tela — pagina para trás. */
+export async function carregarMensagens(
+  oppId: string, antesDe?: string,
+): Promise<{ mensagens: Mensagem[]; temMais: boolean }> {
+  const userDb = await userDatabase()
+  let consulta = userDb
+    .from('activities')
+    .select('id, occurred_at, direction, is_automated, body, outcome, kind, meta')
+    .eq('opportunity_id', oppId)
+    .in('kind', ['whatsapp', 'audio'])
+    .order('occurred_at', { ascending: false })
+    .limit(MENSAGENS_POR_PAGINA + 1)
+
+  if (antesDe) {
+    if (!CURSOR.test(antesDe)) throw new Error('mensagens: cursor inválido')
+    consulta = consulta.lt('occurred_at', antesDe)
   }
 
-  const porOpp = new Map<string, Conversa>()
+  const { data, error } = await consulta
+  if (error) throw new Error(`mensagens: ${error.message}`)
 
-  for (const rraw of data ?? []) {
-    const r = rraw as Row
-    const oppId = r.opportunity_id as string
-    if (!oppId) continue
+  const linhas = data ?? []
+  const temMais = linhas.length > MENSAGENS_POR_PAGINA
 
-    let c = porOpp.get(oppId)
-    if (!c) {
-      c = {
-        oppId,
-        nome: r.people?.full_name ?? 'Sem nome',
-        empresa: r.opportunities?.companies?.trade_name ?? null,
-        telefone: r.people?.phone_primary ?? null,
-        stage: r.opportunities?.stage ?? 'novo',
-        ultimaAt: r.occurred_at as string,
-        ultima: (r.body as string) ?? '',
-        quemAtende: 'lead',
-        atendimento: 'naia', // ajustado abaixo pela trava (v_trava_atual)
-        humanoRespondeu: false,
-        mensagens: [],
-      }
-      porOpp.set(oppId, c)
-    }
+  const mensagens: Mensagem[] = linhas.slice(0, MENSAGENS_POR_PAGINA).map(r => {
     const meta = (r.meta as { audioUrl?: string } | null) ?? null
-    c.mensagens.push({
+    return {
       id: r.id as number,
       at: r.occurred_at as string,
       direction: r.direction as 'inbound' | 'outbound',
@@ -82,31 +100,47 @@ export async function carregarConversas(): Promise<Conversa[]> {
       outcome: (r.outcome as string) ?? null,
       kind: (r.kind as string) ?? 'whatsapp',
       audioUrl: meta?.audioUrl ?? null,
-    })
-  }
-
-  const conversas = [...porOpp.values()]
-  for (const c of conversas) {
-    // mensagens em ordem cronológica (a query veio desc)
-    c.mensagens.sort((a, b) => a.at.localeCompare(b.at))
-    const ultima = c.mensagens[c.mensagens.length - 1]
-    c.ultimaAt = ultima.at
-    c.ultima = ultima.body ?? ''
-    c.quemAtende = ultima.direction === 'inbound' ? 'lead' : ultima.automatizada ? 'naia' : 'humano'
-    c.humanoRespondeu = c.mensagens.some(m => m.direction === 'outbound' && !m.automatizada)
-  }
-  // conversa mais recente no topo
-  conversas.sort((a, b) => b.ultimaAt.localeCompare(a.ultimaAt))
-  const top = conversas.slice(0, 60)
-
-  // estado da trava por telefone (controlada pelo n8n na tabela de cadastro)
-  const fones = [...new Set(top.map(c => (c.telefone ?? '').replace(/\D/g, '')).filter(Boolean))]
-  if (fones.length) {
-    const { data: travas } = await db.from('v_trava_atual').select('phone, travado').in('phone', fones)
-    const travados = new Set((travas ?? []).filter(t => t.travado).map(t => t.phone as string))
-    for (const c of top) {
-      if (travados.has((c.telefone ?? '').replace(/\D/g, ''))) c.atendimento = 'humano'
     }
+  }).reverse()
+
+  await assinarAudios(mensagens)
+  return { mensagens, temMais }
+}
+
+/** Troca a referência interna do áudio por uma URL assinada. Só chega aqui
+    o que o RLS já autorizou acima. Uma chamada por bucket, não por áudio. */
+async function assinarAudios(mensagens: Mensagem[]): Promise<void> {
+  const lotes = new Map<string, Map<string, Mensagem[]>>()
+
+  for (const mensagem of mensagens) {
+    const valor = mensagem.audioUrl
+    mensagem.audioUrl = null
+    if (!valor) continue
+
+    let bucket = 'wa-audio'
+    let caminho: string
+    if (valor.startsWith('wa-audio:')) caminho = valor.slice('wa-audio:'.length)
+    else {
+      try {
+        const url = new URL(valor)
+        if (url.origin !== new URL(process.env.SUPABASE_URL!).origin
+          || !url.pathname.startsWith('/storage/v1/object/public/wa-media/')) continue
+        caminho = decodeURIComponent(url.pathname.slice('/storage/v1/object/public/wa-media/'.length))
+        bucket = 'wa-media'
+      } catch { continue }
+    }
+    if (!caminho || caminho.includes('..') || caminho.startsWith('/')) continue
+
+    let lote = lotes.get(bucket)
+    if (!lote) { lote = new Map(); lotes.set(bucket, lote) }
+    lote.set(caminho, [...(lote.get(caminho) ?? []), mensagem])
   }
-  return top
+
+  await Promise.all([...lotes].map(async ([bucket, lote]) => {
+    const { data } = await db.storage.from(bucket).createSignedUrls([...lote.keys()], 3600)
+    for (const assinado of data ?? []) {
+      if (!assinado.path || assinado.error) continue
+      for (const mensagem of lote.get(assinado.path) ?? []) mensagem.audioUrl = assinado.signedUrl ?? null
+    }
+  }))
 }

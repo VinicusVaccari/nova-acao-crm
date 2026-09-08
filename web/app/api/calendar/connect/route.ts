@@ -12,6 +12,7 @@ export async function GET(req: Request) {
   const origin = new URL(req.url).origin
   const user = await usuarioAtual()
   if (!user) return NextResponse.redirect(`${origin}/login`)
+  if (user.papel !== 'admin') return NextResponse.json({ erro: 'Sem permissão.' }, { status: 403 })
   if (!googleConfigurado()) return NextResponse.redirect(`${origin}/agenda?erro=config`)
 
   const state = crypto.randomUUID()

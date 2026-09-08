@@ -24,10 +24,11 @@ export async function GET(req: Request) {
   if (!code || !state || state !== salvo) return agenda('erro=state')
 
   const user = await usuarioAtual()
+  if (!user || user.papel !== 'admin') return NextResponse.json({ erro: 'Sem permissão.' }, { status: 403 })
 
   try {
     const tok = await trocarCodigo(code, `${origin}/api/calendar/callback`)
-    await salvarConexao(user?.id ?? null, tok)
+    await salvarConexao(user.id, tok)
   } catch (e) {
     console.error('callback calendar:', e)
     return agenda('erro=troca')

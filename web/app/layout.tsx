@@ -17,19 +17,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="pt-BR" className={montserrat.variable} suppressHydrationWarning>
-      <head>
-        {/* Aplica o tema antes da primeira pintura — evita o flash branco. */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `(function(){try{
-              var t=localStorage.getItem('tema');
-              if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
-              document.documentElement.dataset.theme=t;
-            }catch(e){}})()`,
-          }}
-        />
-      </head>
+    <html lang="pt-BR" className={montserrat.variable}>
       <body suppressHydrationWarning>{children}</body>
     </html>
   )

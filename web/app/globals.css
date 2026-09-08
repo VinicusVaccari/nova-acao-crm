@@ -51,7 +51,10 @@
 }
 
 /* -----------------------------------------------------------------
-   TEMA CLARO (padrão)
+   PALETA
+   Tema único, claro. `color-scheme: light` é o que impede o navegador
+   de escurecer por conta própria campos, seletores e barra de rolagem
+   em quem usa o sistema operacional no escuro.
    Barra lateral sempre no roxo da marca — é o que dá cara de sistema.
    ----------------------------------------------------------------- */
 :root {
@@ -100,94 +103,6 @@
   --shadow-sm: 0 1px 2px rgba(36, 26, 78, 0.08), 0 4px 12px rgba(36, 26, 78, 0.07);
   --shadow-md: 0 2px 6px rgba(36, 26, 78, 0.08), 0 8px 22px rgba(36, 26, 78, 0.10);
   --shadow-lg: 0 12px 32px rgba(36, 26, 78, 0.16);
-}
-
-/* -----------------------------------------------------------------
-   TEMA ESCURO — o roxo da marca vira o ambiente inteiro
-   ----------------------------------------------------------------- */
-@media (prefers-color-scheme: dark) {
-  :root:where(:not([data-theme="light"])) {
-    color-scheme: dark;
-
-    --plane:      #150e30;
-    --surface:    #1e1642;
-    --surface-2:  #281f4b;
-    --surface-3:  #332a5c;
-
-    --ink:        #ffffff;
-    --ink-2:      #bdb5db;
-    --ink-muted:  #8880ab;
-
-    --hairline:   rgba(255, 255, 255, 0.09);
-    --hairline-2: rgba(255, 255, 255, 0.16);
-
-    --nav-bg:       #120b28;
-    --nav-bg-2:     #221949;
-    --nav-ink:      #ffffff;
-    --nav-ink-2:    #9d95c4;
-    --nav-hairline: rgba(255, 255, 255, 0.08);
-
-    --accent:       #fdb92e;
-    --accent-hover: #ffc95a;
-    --accent-ink:   #241a4e;
-    --focus:        #22c9ce;
-
-    --series-1:   #01a3a8;
-    --series-2:   #b8860f;
-    --series-3:   #9d7bf0;
-    --grid:       #2e2557;
-    --axis:       #3d3369;
-
-    --ord-1: #0b5f6b;  --ord-2: #0d7580;  --ord-3: #018d92;
-    --ord-4: #01a3a8;  --ord-5: #2bb8bb;  --ord-6: #5fcbcd;
-    --ord-7: #93dcdd;
-
-    --good:     #23b26a;
-    --warning:  #d9a017;
-    --serious:  #e0854f;
-    --critical: #e05264;
-
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.36);
-    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.5);
-  }
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --plane:      #150e30;
-  --surface:    #1e1642;
-  --surface-2:  #281f4b;
-  --surface-3:  #332a5c;
-  --ink:        #ffffff;
-  --ink-2:      #bdb5db;
-  --ink-muted:  #8880ab;
-  --hairline:   rgba(255, 255, 255, 0.09);
-  --hairline-2: rgba(255, 255, 255, 0.16);
-  --nav-bg:       #120b28;
-  --nav-bg-2:     #221949;
-  --nav-ink:      #ffffff;
-  --nav-ink-2:    #9d95c4;
-  --nav-hairline: rgba(255, 255, 255, 0.08);
-  --accent:       #fdb92e;
-  --accent-hover: #ffc95a;
-  --accent-ink:   #241a4e;
-  --focus:        #22c9ce;
-  --series-1:   #01a3a8;
-  --series-2:   #b8860f;
-  --series-3:   #9d7bf0;
-  --grid:       #2e2557;
-  --axis:       #3d3369;
-  --ord-1: #0b5f6b;  --ord-2: #0d7580;  --ord-3: #018d92;
-  --ord-4: #01a3a8;  --ord-5: #2bb8bb;  --ord-6: #5fcbcd;
-  --ord-7: #93dcdd;
-  --good:     #23b26a;
-  --warning:  #d9a017;
-  --serious:  #e0854f;
-  --critical: #e05264;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.36);
-  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.5);
 }
 
 /* ---------- ponte para o Tailwind ---------- */

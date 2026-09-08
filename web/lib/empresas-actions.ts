@@ -21,6 +21,7 @@ export async function criarEmpresa(dados: {
     .from('companies')
     .insert({
       trade_name: nome,
+      created_by: u.id,
       segment: dados.segment?.trim() || null,
       city: dados.city?.trim() || null,
       state: dados.state?.trim() || null,

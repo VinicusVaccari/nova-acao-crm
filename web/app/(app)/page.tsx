@@ -1,5 +1,5 @@
+import { userDatabase } from '@/lib/security/user-db'
 import Link from 'next/link'
-import { db } from '@/lib/db'
 import { brl, brlCurto, dur, num } from '@/lib/format'
 import { Painel, Secao, Selo } from '@/components/ui'
 
@@ -16,6 +16,7 @@ const dia = (iso: string) =>
    Ordem deliberada — o que perde dinheiro mais rápido vem primeiro.
    ----------------------------------------------------------------- */
 export default async function Hoje() {
+  const db = await userDatabase()
   const agora = new Date()
   const fimDoDia = new Date(agora)
   fimDoDia.setHours(23, 59, 59)
