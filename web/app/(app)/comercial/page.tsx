@@ -2,10 +2,11 @@ import { userDatabase } from '@/lib/security/user-db'
 import { dashComercial, funnelSeries } from '@/lib/db'
 import { carregarVendas } from '@/lib/vendas-server'
 import { moedaVenda, periodoIndicadores } from '@/lib/vendas'
+import { normalizarDashFollowup, normalizarDashPerdas } from '@/lib/dash-comercial'
 import { CohortsVendas } from '@/components/cohorts-vendas'
 import { brl, brlCurto, dataCurta, dias, dur, num, pct } from '@/lib/format'
 import { Kpi, Painel, Secao, Selo, Tabela, Td } from '@/components/ui'
-import { FunilBarras, RankingBarras, SerieDuasContagens, SerieTaxa } from '@/components/charts'
+import { FunilBarras, SerieDuasContagens, SerieTaxa } from '@/components/charts'
 import { Periodos } from '@/components/periodos'
 
 export const dynamic = 'force-dynamic'
@@ -20,10 +21,9 @@ export default async function Comercial({
   const p = periodoIndicadores(sp.dias)
   const janela = p.atual ?? 30
 
-  const [d, serie, objecoes, vendedores, reunioes, vendas, perfisVendedores] = await Promise.all([
+  const [d, serie, vendedores, reunioes, vendas, perfisVendedores, perdas, followup] = await Promise.all([
     dashComercial(p),
     funnelSeries(p, janela > 45 ? 'week' : 'day'),
-    db.from('v_objection_map').select('*').limit(6),
     db.rpc('fn_dash_por_vendedor', { p_from: p.de, p_to: p.ate }),
     db
       .from('meetings')
@@ -32,15 +32,20 @@ export default async function Comercial({
       .lte('scheduled_at', `${p.ate}T23:59:59`),
     carregarVendas(p),
     db.from('profiles').select('id').eq('role', 'vendedor').eq('is_active', true),
+    db.rpc('fn_dash_perdas', { p_from: p.de, p_to: p.ate }),
+    db.rpc('fn_dash_followup', { p_from: p.de, p_to: p.ate }),
   ])
 
-  if (perfisVendedores.error || vendedores.error) {
+  if (perfisVendedores.error || vendedores.error || perdas.error || followup.error) {
     throw new Error('Não foi possível carregar o desempenho dos vendedores.')
   }
   // O RPC legado inclui todos os perfis ativos. A tabela comercial mostra
   // apenas quem tem o papel Vendedor, mesmo sem movimento no período.
   const idsVendedores = new Set((perfisVendedores.data ?? []).map(perfil => perfil.id))
   const timeComercial = (vendedores.data ?? []).filter((v: { owner_id: string }) => idsVendedores.has(v.owner_id))
+  const dashPerdas = normalizarDashPerdas(perdas.data)
+  const dashFollowup = normalizarDashFollowup(followup.data)
+  const usd = (v: number) => `US$ ${v.toFixed(2)}`
 
   // Show rate por semana — realizadas / (realizadas + no-show)
   const semanas = new Map<string, { ok: number; falta: number }>()
@@ -74,12 +79,6 @@ export default async function Comercial({
     bucket: dataCurta(s.bucket),
     leads: Number(s.leads),
     reunioes: Number(s.diagnosticos),
-  }))
-
-  const objs = (objecoes.data ?? []).map(o => ({
-    rotulo: o.label as string,
-    valor: Number(o.receita_perdida),
-    detalhe: `${o.ocorrencias} ocorrências · ${o.pct_letal ?? 0}% letal`,
   }))
 
   return (
@@ -158,6 +157,57 @@ export default async function Comercial({
         <CohortsVendas cohorts={vendas.cohorts} />
       </Secao>
 
+      <Secao titulo="Motivos de perda" descricao="Negócios perdidos no período selecionado. A origem vem do ator do evento de perda no histórico de etapas.">
+        <div className="grid lg:grid-cols-2 gap-4">
+          <Painel titulo="Motivos registrados" legenda={`${num(dashPerdas.total_perdidos)} perdas no período`}>
+            <Tabela colunas={[{ label: 'Motivo' }, { label: 'Perdas', alinhar: 'd' }, { label: 'Do total', alinhar: 'd' }]}>
+              {dashPerdas.motivos.map(motivo => (
+                <tr key={motivo.rotulo}>
+                  <Td forte>{motivo.rotulo}</Td>
+                  <Td d>{num(motivo.quantidade)}</Td>
+                  <Td d>{pct(motivo.percentual)}</Td>
+                </tr>
+              ))}
+              {dashPerdas.motivos.length === 0 && (
+                <tr><td colSpan={3} className="t-sm muted">Nenhuma perda registrada no período.</td></tr>
+              )}
+            </Tabela>
+          </Painel>
+          <Painel titulo="Como a perda foi registrada" legenda="Automática: Naia ou MEL. Vendedor: perda marcada manualmente.">
+            <div className="grid grid-cols-3 gap-3">
+              <Kpi rotulo="Automática" valor={num(dashPerdas.automaticas)} />
+              <Kpi rotulo="Vendedor" valor={num(dashPerdas.vendedor)} />
+              <Kpi rotulo="Não identificado" valor={num(dashPerdas.nao_identificado)} />
+            </div>
+          </Painel>
+        </div>
+      </Secao>
+
+      <Secao titulo="Follow-up (MEL)" descricao="Coorte pelo primeiro toque enviado no período. As respostas, etapas e desfechos continuam sendo acompanhados depois dele.">
+        <div className="grid lg:grid-cols-2 gap-4">
+          <Painel titulo="Coorte do período" legenda="Só entram negócios cujo primeiro disparo enviado caiu no período selecionado.">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <Kpi rotulo="Leads na coorte" valor={num(dashFollowup.leads_coorte)} />
+              <Kpi rotulo="Toques enviados" valor={num(dashFollowup.toques_enviados)} />
+              <Kpi rotulo="Responderam" valor={num(dashFollowup.responderam)} nota={pct(dashFollowup.tx_resposta)} />
+              <Kpi rotulo="Qualificados" valor={num(dashFollowup.qualificados)} nota={pct(dashFollowup.tx_qualificacao)} />
+              <Kpi rotulo={'Perdidos por “sumiu”'} valor={num(dashFollowup.perdidos_sumiu)} />
+            </div>
+          </Painel>
+          <Painel titulo="Desfecho dos qualificados" legenda="Situação atual dos negócios que chegaram a qualificado depois do primeiro toque.">
+            <div className="grid grid-cols-3 gap-3" style={{ marginBottom: 'var(--s-4)' }}>
+              <Kpi rotulo="Venderam" valor={num(dashFollowup.qualificados_venderam)} nota={pct(dashFollowup.tx_venda)} />
+              <Kpi rotulo="Perderam" valor={num(dashFollowup.qualificados_perderam)} />
+              <Kpi rotulo="Em andamento" valor={num(dashFollowup.qualificados_em_andamento)} />
+            </div>
+            <div className="flex flex-wrap gap-x-6 gap-y-2 t-sm">
+              <span>Custo da coorte: <strong>{usd(dashFollowup.custo_coorte_usd)}</strong></span>
+              <span>Custo de hoje: <strong>{usd(dashFollowup.custo_hoje_usd)}</strong> de {usd(dashFollowup.teto_custo_dia_usd)}</span>
+            </div>
+          </Painel>
+        </div>
+      </Secao>
+
       <Secao titulo="Onde o funil trava">
         <div className="grid lg:grid-cols-2 gap-4">
           <Painel titulo="Funil acumulado" legenda="Uma venda direta também supera as etapas anteriores. Isso não registra reuniões ou propostas como realizadas.">
@@ -186,24 +236,6 @@ export default async function Comercial({
           legenda={`${num(d.reunioes_realizadas)} realizadas · ${num(d.reunioes_no_show)} no-show · ${num(d.reunioes_pendentes)} ainda por vir`}
         >
           <SerieTaxa dados={serieShow} chave="taxa" rotulo="Show rate" meta={75} />
-        </Painel>
-      </Secao>
-
-      <Secao
-        titulo="Mapa de objeções"
-        descricao="Alimentado sozinho a cada reunião. Ordenado por quanto dinheiro cada objeção custou, não por frequência."
-      >
-        <Painel
-          titulo="Receita perdida por objeção"
-          legenda="As três primeiras são a sua pauta de conteúdo do próximo mês"
-        >
-          {objs.length ? (
-            <RankingBarras dados={objs} />
-          ) : (
-            <p className="text-[13px]" style={{ color: 'var(--ink-muted)' }}>
-              Nenhuma objeção registrada no período.
-            </p>
-          )}
         </Painel>
       </Secao>
 

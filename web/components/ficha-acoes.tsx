@@ -43,7 +43,7 @@ export function AgendarReuniao({ oppId }: { oppId: string }) {
       <h3 className="t-h3" style={{ marginBottom: 'var(--s-3)' }}>Agendar reunião</h3>
       <div className="flex flex-wrap gap-2 mb-3">
         <select name="kind" className="field" defaultValue="entendimento">
-          <option value="entendimento">Entendimento</option>
+          <option value="entendimento">Reunião de Entendimento</option>
           <option value="apresentacao_proposta">Apresentação de Proposta</option>
           <option value="followup">Follow-up</option>
           <option value="briefing">Briefing</option>
@@ -59,15 +59,29 @@ export function AgendarReuniao({ oppId }: { oppId: string }) {
 /* ---------------- Marcar presença ---------------- */
 
 export function PresencaReuniao({ meetingId }: { meetingId: string }) {
+  const [aviso, setAviso] = useState<string | null>(null)
+  const [erro, setErro] = useState<string | null>(null)
   const [pendente, startTransition] = useTransition()
-  const marcar = (s: 'realizada' | 'no_show' | 'cancelada') =>
-    startTransition(async () => { await marcarReuniao(meetingId, s) })
+  const marcar = (s: 'realizada' | 'no_show' | 'cancelada') => {
+    setAviso(null)
+    setErro(null)
+    startTransition(async () => {
+      const r = await marcarReuniao(meetingId, s)
+      if (r.ok) setAviso(r.aviso ?? null)
+      else setErro(r.erro)
+    })
+  }
 
   return (
-    <div className="flex gap-1.5">
-      <Botao tipo="primario" onClick={() => marcar('realizada')} disabled={pendente}>Aconteceu</Botao>
-      <Botao tipo="perigo" onClick={() => marcar('no_show')} disabled={pendente}>No-show</Botao>
-      <Botao onClick={() => marcar('cancelada')} disabled={pendente}>Cancelar</Botao>
+    <div className="flex flex-col items-end" style={{ gap: 'var(--s-1)' }}>
+      <div className="flex gap-1.5">
+        <Botao tipo="primario" onClick={() => marcar('realizada')} disabled={pendente}>Aconteceu</Botao>
+        <Botao tipo="perigo" onClick={() => marcar('no_show')} disabled={pendente}>No-show</Botao>
+        <Botao onClick={() => marcar('cancelada')} disabled={pendente}>Cancelar</Botao>
+      </div>
+      <p className="t-xs" role="status" aria-live="polite" style={{ color: erro ? 'var(--critical)' : 'var(--warning)', minHeight: '1.25rem', visibility: aviso || erro ? 'visible' : 'hidden' }}>
+        {erro ?? aviso ?? 'Aviso'}
+      </p>
     </div>
   )
 }

@@ -74,4 +74,13 @@ export type CardPipeline = {
   empresa: string | null
   dono: string | null
   proxima_reuniao: string | null
+  /* Mesma trava que a tela de Mensagens usa (fn_trava_status/v_trava_atual) —
+     NÃO é opportunities.atendimento, que está órfã. `null` = sem telefone,
+     o indicador não se aplica a este negócio. */
+  atendimento: 'naia' | 'travado' | 'voce' | null
+  /* Cadência de qualificação (followup_disparos) — `null` = nenhum toque
+     SAIU ainda, ou o lead respondeu depois do último envio. `toque` é o
+     toque do último ENVIADO de verdade (status 'enviado'), 1 a 3 — nunca
+     um toque reservado ou gerado em sombra. */
+  followup: { toque: number; total: number } | null
 }

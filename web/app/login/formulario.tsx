@@ -10,6 +10,7 @@ export function FormularioLogin() {
   const router = useRouter()
   const params = useSearchParams()
   const destino = safeRedirect(params.get('destino'))
+  const redefinida = params.get('redefinida') === '1'
 
   const [erro, setErro] = useState<string | null>(null)
   const [carregando, setCarregando] = useState(false)
@@ -84,6 +85,8 @@ export function FormularioLogin() {
         </div>
       )}
 
+      {redefinida && <p className="t-sm" style={{ color: 'var(--accent)' }}>Senha redefinida. Entre com sua nova senha.</p>}
+
       <button
         type="submit"
         disabled={carregando}
@@ -94,7 +97,7 @@ export function FormularioLogin() {
       </button>
 
       <p className="t-xs muted" style={{ marginTop: 'var(--s-2)', textAlign: 'center' }}>
-        Acesso restrito ao time. Esqueceu a senha? Fale com o administrador.
+        Acesso restrito ao time. <a href="/esqueci-senha">Esqueceu a senha? Clique aqui.</a>
       </p>
     </form>
   )

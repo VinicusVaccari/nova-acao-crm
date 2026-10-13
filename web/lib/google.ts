@@ -112,13 +112,14 @@ type Conexao = {
 }
 
 /** A conexão ativa (hoje há só uma — a do Rodrigues). */
-export async function conexao(): Promise<Conexao | null> {
-  const { data } = await db
+export async function conexao(signal?: AbortSignal): Promise<Conexao | null> {
+  const consulta = db
     .from('calendar_accounts')
     .select('id, google_email, calendar_id, access_token, refresh_token, token_expiry')
     .order('updated_at', { ascending: false })
     .limit(1)
-    .maybeSingle()
+  const { data } = await (signal ? consulta.abortSignal(signal) : consulta).maybeSingle()
+  signal?.throwIfAborted()
   return (data as Conexao) ?? null
 }
 
@@ -135,8 +136,9 @@ export async function desconectar(): Promise<void> {
     `force` ignora o expiry e força a renovação (usado quando o Google
     devolve 401 mesmo com o token "dentro da validade" — ele revoga
     tokens antigos quando muitos são emitidos). */
-async function tokenValido(force = false): Promise<{ token: string; calendarId: string } | null> {
-  const c = await conexao()
+async function tokenValido(force = false, signal?: AbortSignal): Promise<{ token: string; calendarId: string } | null> {
+  signal?.throwIfAborted()
+  const c = await conexao(signal)
   if (!c) return null
 
   const folga = Date.now() + 60_000
@@ -146,7 +148,7 @@ async function tokenValido(force = false): Promise<{ token: string; calendarId: 
   if (!c.refresh_token) return null
 
   const res = await fetch(TOKEN_URL, {
-    signal: AbortSignal.timeout(15000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -162,17 +164,20 @@ async function tokenValido(force = false): Promise<{ token: string; calendarId: 
   }
   const tok: TokenResp = await res.json()
   const expiry = new Date(Date.now() + (tok.expires_in - 60) * 1000).toISOString()
-  await db
+  const salvarToken = db
     .from('calendar_accounts')
     .update({ access_token: tok.access_token, token_expiry: expiry, updated_at: new Date().toISOString() })
     .eq('id', c.id)
+  await (signal ? salvarToken.abortSignal(signal) : salvarToken)
+  signal?.throwIfAborted()
   return { token: tok.access_token, calendarId: c.calendar_id }
 }
 
-async function calFetch(path: string, init: RequestInit, token: string) {
+async function calFetch(path: string, init: RequestInit, token: string, signal?: AbortSignal) {
+  signal?.throwIfAborted()
   return fetch(`${CAL}${path}`, {
     ...init,
-    signal: AbortSignal.timeout(15000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(init.headers ?? {}) },
   })
 }
@@ -180,13 +185,17 @@ async function calFetch(path: string, init: RequestInit, token: string) {
 /** Chamada autenticada ao Calendar com retry: se o Google devolver 401
     (token revogado antes do expiry), força um refresh e tenta de novo.
     `montarPath` recebe o calendar_id. Retorna null se não há conexão. */
-async function calAuth(montarPath: (calId: string) => string, init: RequestInit): Promise<Response | null> {
-  const auth = await tokenValido()
+async function calAuth(montarPath: (calId: string) => string, init: RequestInit, limiteEm?: number): Promise<Response | null> {
+  // Um único sinal cobre banco, token, primeira chamada e retry após 401.
+  // Sem prazo opcional, mantém os timeouts e o comportamento anteriores.
+  if (limiteEm !== undefined && limiteEm <= Date.now()) throw new DOMException('Prazo da agenda esgotado', 'TimeoutError')
+  const signal = limiteEm === undefined ? undefined : AbortSignal.timeout(Math.max(1, limiteEm - Date.now()))
+  const auth = await tokenValido(false, signal)
   if (!auth) return null
-  let res = await calFetch(montarPath(auth.calendarId), init, auth.token)
+  let res = await calFetch(montarPath(auth.calendarId), init, auth.token, signal)
   if (res.status === 401) {
-    const fresh = await tokenValido(true)
-    if (fresh) res = await calFetch(montarPath(fresh.calendarId), init, fresh.token)
+    const fresh = await tokenValido(true, signal)
+    if (fresh) res = await calFetch(montarPath(fresh.calendarId), init, fresh.token, signal)
   }
   return res
 }
@@ -234,7 +243,7 @@ export async function criarEvento(ev: NovoEvento): Promise<EventoCriado | null> 
   return { eventId: j.id, meetUrl: meet, htmlLink: j.htmlLink ?? null }
 }
 
-export async function atualizarEvento(eventId: string, patch: Partial<NovoEvento>): Promise<boolean> {
+export async function atualizarEvento(eventId: string, patch: Partial<NovoEvento>, limiteEm?: number): Promise<boolean> {
   const body: Record<string, unknown> = {}
   if (patch.summary) body.summary = patch.summary
   if (patch.description !== undefined) body.description = patch.description
@@ -244,16 +253,18 @@ export async function atualizarEvento(eventId: string, patch: Partial<NovoEvento
   const res = await calAuth(
     cid => `/calendars/${encodeURIComponent(cid)}/events/${encodeURIComponent(eventId)}?sendUpdates=all`,
     { method: 'PATCH', body: JSON.stringify(body) },
+    limiteEm,
   )
   if (!res) return false
   if (!res.ok) console.error('atualizarEvento falhou:', res.status, await res.text())
   return res.ok
 }
 
-export async function cancelarEvento(eventId: string): Promise<boolean> {
+export async function cancelarEvento(eventId: string, limiteEm?: number): Promise<boolean> {
   const res = await calAuth(
     cid => `/calendars/${encodeURIComponent(cid)}/events/${encodeURIComponent(eventId)}?sendUpdates=all`,
     { method: 'DELETE' },
+    limiteEm,
   )
   if (!res) return false
   // 410 = já removido; tratamos como sucesso
@@ -331,7 +342,10 @@ export async function reconciliarReunioes(reunioes: ReuniaoRow[]): Promise<Reuni
 }
 
 /** Lista eventos entre duas datas (para a página da Agenda). */
-export async function listarEventos(timeMinISO: string, timeMaxISO: string): Promise<EventoAgenda[]> {
+/** Igual a listarEventos, mas preserva a diferença crítica entre agenda vazia
+    e consulta indisponível. A LUNA não pode oferecer um horário quando não
+    sabe se há evento ocupado. */
+export async function listarEventosSeguro(timeMinISO: string, timeMaxISO: string, limiteEm?: number): Promise<EventoAgenda[] | null> {
   const p = new URLSearchParams({
     timeMin: timeMinISO,
     timeMax: timeMaxISO,
@@ -339,11 +353,11 @@ export async function listarEventos(timeMinISO: string, timeMaxISO: string): Pro
     orderBy: 'startTime',
     maxResults: '250',
   })
-  const res = await calAuth(cid => `/calendars/${encodeURIComponent(cid)}/events?${p.toString()}`, { method: 'GET' })
-  if (!res) return []
+  const res = await calAuth(cid => `/calendars/${encodeURIComponent(cid)}/events?${p.toString()}`, { method: 'GET' }, limiteEm)
+  if (!res) return null
   if (!res.ok) {
     console.error('listarEventos falhou:', res.status, await res.text())
-    return []
+    return null
   }
   const j = await res.json()
   type GAtt = { email?: string; displayName?: string; responseStatus?: string; organizer?: boolean; self?: boolean; resource?: boolean }
@@ -382,4 +396,10 @@ export async function listarEventos(timeMinISO: string, timeMaxISO: string): Pro
           organizador: !!a.organizer,
         })),
     }))
+}
+
+/** Contrato histórico da Agenda: falha ainda aparece como lista vazia na UI.
+    Fluxos automáticos que precisam de certeza usam listarEventosSeguro. */
+export async function listarEventos(timeMinISO: string, timeMaxISO: string): Promise<EventoAgenda[]> {
+  return (await listarEventosSeguro(timeMinISO, timeMaxISO)) ?? []
 }

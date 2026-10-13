@@ -215,7 +215,7 @@ export function PainelNegociacao({
           {neg.produtos === 0 && <p className="t-xs muted" style={{ marginTop: -6 }}>Adicione produtos na aba Produtos para compor o valor.</p>}
           <div style={{ height: 1, background: 'var(--hairline)', margin: '2px 0' }} />
           <LinhaLeitura rotulo="Responsável" valor={neg.responsavel} />
-          <LinhaLeitura rotulo="Criada em" valor={new Date(neg.criadaEm).toLocaleDateString('pt-BR')} />
+          <LinhaLeitura rotulo="Criada em" valor={new Date(neg.criadaEm).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })} />
           <LinhaLeitura rotulo="Speed to lead" valor={neg.speedMin == null ? 'sem contato' : dur(neg.speedMin)} alerta={neg.speedMin == null || neg.speedMin > 5} />
         </div>
       )}

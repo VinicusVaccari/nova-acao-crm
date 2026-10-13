@@ -2,6 +2,7 @@ import 'server-only'
 import { db } from '../db'
 import { usuarioAtual } from '../supabase/server'
 import { canAccessOpportunity, isManager } from './policy'
+import { naiaAtivaId } from './naia'
 
 export async function requireActiveUser() {
   const user = await usuarioAtual()
@@ -26,7 +27,8 @@ export async function requireOpportunityAccess(id: string) {
   if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id)) throw new Error('Negócio inválido.')
   const { data, error } = await db.from('opportunities')
     .select('id, owner_id, sdr_id, person_id, company_id').eq('id', id).maybeSingle()
-  if (error || !data || !canAccessOpportunity(user, data)) throw new Error('Negócio indisponível ou sem permissão.')
+  const naiaId = await naiaAtivaId()
+  if (error || !data || !canAccessOpportunity(user, data, naiaId)) throw new Error('Negócio indisponível ou sem permissão.')
   return { user, opportunity: data }
 }
 
@@ -57,9 +59,18 @@ export async function requireEntityAccess(entity: string, id: string) {
   if (error || !record) throw new Error('Entidade indisponível.')
   if (isManager(user)) return user
   if (entity === 'company' && (record as unknown as { created_by?: string }).created_by === user.id) return user
+  // pré-filtro só decide o que TRAZER do banco; quem decide acesso de
+  // verdade é canAccessOpportunity logo abaixo. Vendedor precisa trazer
+  // também os negócios sem dono (fila da Naia), senão nunca chega lá.
+  const naiaId = await naiaAtivaId()
+  // Compatibilidade transitória: antes da 0082, a fila ainda está em NULL.
+  const filaNaia = naiaId ? `owner_id.eq.${naiaId}` : 'owner_id.is.null'
+  const filtro = user.papel === 'vendedor'
+    ? `owner_id.eq.${user.id},sdr_id.eq.${user.id},${filaNaia}`
+    : `owner_id.eq.${user.id},sdr_id.eq.${user.id}`
   const { data: deals, error: accessError } = await db.from('opportunities')
     .select('owner_id, sdr_id').eq(entity === 'contact' ? 'person_id' : 'company_id', id)
-    .or(`owner_id.eq.${user.id},sdr_id.eq.${user.id}`).limit(1)
-  if (accessError || !deals?.some(deal => canAccessOpportunity(user, deal))) throw new Error('Sem permissão para a entidade.')
+    .or(filtro).limit(1)
+  if (accessError || !deals?.some(deal => canAccessOpportunity(user, deal, naiaId))) throw new Error('Sem permissão para a entidade.')
   return user
 }

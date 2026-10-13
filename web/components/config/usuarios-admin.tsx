@@ -97,25 +97,31 @@ function AbaUsuarios({ usuarios, equipes }: { usuarios: Usuario[]; equipes: Equi
                 </div>
               </td>
               <td>
-                <select className="field" defaultValue={u.role} onChange={e => salvar(u.id, { role: e.target.value })} style={{ minWidth: 140 }}>
-                  {PAPEIS.map(p => <option key={p.v} value={p.v}>{p.label}</option>)}
-                </select>
+                {u.role === 'ia' ? <span>Naia (IA)</span> : (
+                  <select className="field" defaultValue={u.role} onChange={e => salvar(u.id, { role: e.target.value })} style={{ minWidth: 140 }}>
+                    {PAPEIS.map(p => <option key={p.v} value={p.v}>{p.label}</option>)}
+                  </select>
+                )}
               </td>
               <td>
-                <select className="field" defaultValue={u.team_id ?? ''} onChange={e => salvar(u.id, { team_id: e.target.value || null })} style={{ minWidth: 140 }}>
-                  <option value="">— sem equipe —</option>
-                  {equipes.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                </select>
+                {u.role === 'ia' ? '—' : (
+                  <select className="field" defaultValue={u.team_id ?? ''} onChange={e => salvar(u.id, { team_id: e.target.value || null })} style={{ minWidth: 140 }}>
+                    <option value="">— sem equipe —</option>
+                    {equipes.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                  </select>
+                )}
               </td>
               <td>
-                <input
-                  type="number" min={0} className="field" defaultValue={u.lead_capacity}
-                  onBlur={e => { const n = Number(e.target.value); if (n !== u.lead_capacity) salvar(u.id, { lead_capacity: n }) }}
-                  style={{ width: 76 }}
-                />
+                {u.role === 'ia' ? '—' : (
+                  <input
+                    type="number" min={0} className="field" defaultValue={u.lead_capacity}
+                    onBlur={e => { const n = Number(e.target.value); if (n !== u.lead_capacity) salvar(u.id, { lead_capacity: n }) }}
+                    style={{ width: 76 }}
+                  />
+                )}
               </td>
               <td>
-                <button
+                {u.role === 'ia' ? <span className="chip">Perfil do sistema</span> : <button
                   onClick={() => salvar(u.id, { is_active: !u.is_active })}
                   className="chip"
                   style={{
@@ -125,7 +131,7 @@ function AbaUsuarios({ usuarios, equipes }: { usuarios: Usuario[]; equipes: Equi
                   }}
                 >
                   {u.is_active ? 'Ativo' : 'Inativo'}
-                </button>
+                </button>}
               </td>
             </tr>
           ))}
@@ -274,7 +280,7 @@ function AbaConvites({ equipes, convites }: { equipes: Equipe[]; convites: Convi
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 600 }}>{c.email}</div>
               <div className="t-xs muted">
-                {papelLabel(c.role)} · {nomeEquipe(equipes, c.team_id)} · expira {new Date(c.expires_at).toLocaleDateString('pt-BR')}
+                {papelLabel(c.role)} · {nomeEquipe(equipes, c.team_id)} · expira {new Date(c.expires_at).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
               </div>
             </div>
             <button className="btn btn-ghost btn-sm" onClick={() => copiar(linkDoConvite(c.token), c.id)}>

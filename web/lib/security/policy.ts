@@ -5,9 +5,18 @@ export function isManager(actor: Actor): boolean {
   return actor.papel === 'admin' || actor.papel === 'gestor'
 }
 
-// Mesma regra de carteira das policies do CRM: gestão, responsável ou SDR.
-export function canAccessOpportunity(actor: Actor, opportunity: OpportunityAccess): boolean {
-  return isManager(actor) || opportunity.owner_id === actor.id || opportunity.sdr_id === actor.id
+// Mesma regra de carteira das policies do CRM: gestão, responsável, SDR —
+// ou vendedor ativo vendo a fila da Naia (owner_id nulo = sem dono, está
+// com a Naia; ver docs/02). Dono preenchido nunca é ignorado por isto.
+export function canAccessOpportunity(actor: Actor, opportunity: OpportunityAccess, naiaId: string | null = null): boolean {
+  return isManager(actor)
+    || opportunity.owner_id === actor.id
+    || opportunity.sdr_id === actor.id
+    || (actor.papel === 'vendedor' && (
+      opportunity.owner_id === naiaId
+      // Compatibilidade transitória: o app pode entrar antes da 0082.
+      || (naiaId === null && opportunity.owner_id === null)
+    ))
 }
 
 export function safeRedirect(value: string | null): string {

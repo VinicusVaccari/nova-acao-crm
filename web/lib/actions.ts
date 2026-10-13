@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { db } from './db'
 import { requireActiveUser, requireOpportunityAccess, requireMeetingAccess, requireCalendarEventAccess, requireManager, requireAdmin } from './security/authorization'
 import { allowedPatch } from './security/policy'
+import { naiaAtivaId } from './security/naia'
 import { validateUpload } from './security/upload'
 import { integrationRateLimit } from './security/integration'
 import { usuarioAtual } from './supabase/server'
@@ -11,6 +12,8 @@ import { cancelarEvento, criarEvento, desconectar } from './google'
 import { carregarConversas, carregarMensagens, contarNaoLidas, marcarConversaLida, type Conversa, type Mensagem } from './mensagens'
 import { enviarWhatsapp } from './whatsapp'
 import { registrarPerdaAutorizada } from './negociacao-service'
+import { calcularValoresProdutos, validarDadosProduto } from './valores-produtos'
+import { dataHoraBrasilParaIso } from './horario-brasil'
 
 /** Conversas do inbox — usada pelo polling do inbox (atualiza sozinho). */
 export async function listarConversas(): Promise<Conversa[]> {
@@ -51,13 +54,58 @@ function appUrl() {
    transação.
    ----------------------------------------------------------------- */
 
-export type Resultado = { ok: true } | { ok: false; erro: string }
+export type Resultado = { ok: true; aviso?: string } | { ok: false; erro: string }
 
 function recarregar(oppId?: string) {
   revalidatePath('/')
   revalidatePath('/pipeline')
   revalidatePath('/comercial')
   if (oppId) revalidatePath(`/lead/${oppId}`)
+}
+
+const ETAPAS_APOS_REUNIAO: Record<string, string> = {
+  novo: 'apresentacao_institucional',
+  primeiro_contato: 'apresentacao_institucional',
+  qualificado: 'apresentacao_institucional',
+  desqualificado: 'apresentacao_institucional',
+  reuniao_agendada: 'apresentacao_institucional',
+  apresentacao_institucional: 'envio_proposta',
+  apresentacao_proposta: 'negociacao',
+}
+
+async function moverEtapaAutomatica(
+  oppId: string,
+  userId: string,
+  destinos: Record<string, string>,
+): Promise<string | null> {
+  try {
+    const { data: opp, error: erroOpp } = await db
+      .from('opportunities')
+      .select('stage, lost_at, paused_at')
+      .eq('id', oppId)
+      .maybeSingle()
+    if (erroOpp || !opp) {
+      console.error('automacao-pipeline → oportunidade:', erroOpp?.message ?? 'não encontrada')
+      return 'A ação foi concluída, mas não foi possível atualizar a etapa automaticamente.'
+    }
+    if (opp.lost_at || opp.paused_at) return null
+
+    const destino = destinos[opp.stage as string]
+    if (!destino) return null
+    const { error: erroMover } = await db.rpc('fn_move_stage', {
+      p_opportunity_id: oppId,
+      p_to_stage: destino,
+      p_actor: userId,
+      p_actor_type: 'user',
+      p_reason: null,
+      p_meta: { via: 'automacao-pipeline' },
+    })
+    if (!erroMover) return null
+    console.error('automacao-pipeline → fn_move_stage:', erroMover.message)
+  } catch (erro) {
+    console.error('automacao-pipeline:', erro)
+  }
+  return 'A ação foi concluída, mas não foi possível atualizar a etapa automaticamente.'
 }
 
 export async function moverEstagio(
@@ -223,7 +271,7 @@ export async function duplicarNegociacao(oppId: string): Promise<Resultado> {
 }
 
 const ROTULO_REUNIAO: Record<string, string> = {
-  entendimento: 'Entendimento',
+  entendimento: 'Reunião de Entendimento',
   apresentacao_proposta: 'Apresentação de Proposta',
   followup: 'Follow-up',
   briefing: 'Briefing',
@@ -276,7 +324,9 @@ export async function agendarReuniao(
   dados: { kind: string; quando: string }
 ): Promise<Resultado> {
   await requireOpportunityAccess(oppId)
-  const inicio = new Date(dados.quando)
+  const inicioIso = dataHoraBrasilParaIso(dados.quando)
+  if (!inicioIso) return { ok: false, erro: 'Data ou hora inválida.' }
+  const inicio = new Date(inicioIso)
   const { data: opp } = await db
     .from('opportunities')
     .select('title, people:person_id ( full_name, email_primary ), companies:company_id ( trade_name )')
@@ -286,13 +336,14 @@ export async function agendarReuniao(
   const empresa = (opp?.companies as { trade_name?: string } | null)?.trade_name
   const nome = pessoa?.full_name ?? (opp?.title as string) ?? 'Lead'
   const rotulo = ROTULO_REUNIAO[dados.kind] ?? 'Reunião'
+  const tituloConvite = `${rotulo} — Nova Ação · ${nome}${empresa ? ` (${empresa})` : ''}`
 
   const r = await inserirReuniaoNoDeal(oppId, {
     kind: dados.kind,
     inicio,
     duracaoMin: DURACAO_PADRAO_MIN,
-    summary: `${rotulo} · ${nome}${empresa ? ` (${empresa})` : ''}`,
-    descricao: `Reunião de ${rotulo.toLowerCase()} — Nova Ação.\nNegócio: ${appUrl()}/lead/${oppId}`,
+    summary: tituloConvite,
+    descricao: `${tituloConvite}\nNegócio: ${appUrl()}/lead/${oppId}`,
     convidados: pessoa?.email_primary ? [pessoa.email_primary] : undefined,
     comMeet: true,
     moverEstagio: true,
@@ -356,7 +407,7 @@ export async function marcarReuniao(
   meetingId: string,
   status: 'realizada' | 'no_show' | 'cancelada'
 ): Promise<Resultado> {
-  await requireMeetingAccess(meetingId)
+  const { user } = await requireMeetingAccess(meetingId)
   if (!['realizada', 'no_show', 'cancelada'].includes(status)) return { ok: false, erro: 'Status inválido.' }
   const { data: m, error } = await db
     .from('meetings')
@@ -371,18 +422,11 @@ export async function marcarReuniao(
     try { await cancelarEvento(m.external_event_id as string) } catch (e) { console.error('cancelar evento:', e) }
   }
 
-  if (status === 'realizada') {
-    await db.rpc('fn_move_stage', {
-      p_opportunity_id: m.opportunity_id,
-      p_to_stage: 'apresentacao_institucional',
-      p_actor: (await requireActiveUser()).id,
-      p_actor_type: 'user',
-      p_reason: null,
-      p_meta: {},
-    })
-  }
+  const aviso = status === 'realizada'
+    ? await moverEtapaAutomatica(m.opportunity_id as string, user.id, ETAPAS_APOS_REUNIAO)
+    : null
   recarregar(m.opportunity_id as string)
-  return { ok: true }
+  return aviso ? { ok: true, aviso } : { ok: true }
 }
 
 /** Exclui um evento da Agenda: remove do Google Calendar e, se estiver
@@ -409,10 +453,19 @@ export async function atualizarNegocio(
     owner_id?: string | null
   }
 ): Promise<Resultado> {
-  await requireOpportunityAccess(oppId)
+  const { opportunity } = await requireOpportunityAccess(oppId)
   const patch = allowedPatch(dados, ['title', 'qualificacao', 'source', 'campaign', 'creative', 'product', 'owner_id'])
   if (patch.qualificacao !== undefined && (typeof patch.qualificacao !== 'number' || !Number.isInteger(patch.qualificacao) || patch.qualificacao < 0 || patch.qualificacao > 5)) return { ok: false, erro: 'Qualificação inválida.' }
-  if (Object.hasOwn(patch, 'owner_id')) await requireManager()
+  if (Object.hasOwn(patch, 'owner_id')) {
+    await requireManager()
+    const naiaId = await naiaAtivaId()
+    // Compatibilidade transitória: este NULL só existe antes da 0082.
+    // Cadeado: dono só troca à mão entre humanos. Tirar da Naia é o
+    // Assumir (liga a trava e troca o dono juntos, no mesmo instante);
+    // ninguém troca à mão o dono de quem está com ela, nem devolve.
+    if (patch.owner_id === naiaId || (naiaId === null && patch.owner_id === null)) return { ok: false, erro: 'Um negócio não volta para a Naia.' }
+    if (opportunity.owner_id === naiaId || (naiaId === null && opportunity.owner_id === null)) return { ok: false, erro: 'Este lead está com a Naia. Use Assumir para passá-lo ao Rodrigues.' }
+  }
   const { error } = await db.from('opportunities').update(patch).eq('id', oppId)
   if (error) return { ok: false, erro: error.message }
   recarregar(oppId)
@@ -485,8 +538,14 @@ export async function desvincularEmpresa(oppId: string): Promise<Resultado> {
 export async function criarLead(payload: Record<string, unknown>): Promise<Resultado> {
   const user = await requireActiveUser()
   if (await integrationRateLimit(`manual-lead:${user.id}`, 60)) return { ok: false, erro: 'Cadastro temporariamente limitado. Tente novamente em um minuto.' }
-  const safePayload = allowedPatch(payload, ['name', 'phone', 'email', 'company_name', 'product', 'expected_value', 'channel', 'utm_source'])
+  const safePayload = allowedPatch(payload, ['name', 'phone', 'email', 'company_name', 'product', 'expected_value', 'channel', 'utm_source', 'owner_id'])
   if (typeof safePayload.name !== 'string' || !safePayload.name.trim() || typeof safePayload.phone !== 'string' || !safePayload.phone.trim()) return { ok: false, erro: 'Informe nome e telefone.' }
+  const naiaId = await naiaAtivaId()
+  if (safePayload.owner_id !== undefined && safePayload.owner_id !== user.id && safePayload.owner_id !== naiaId) return { ok: false, erro: 'Responsável inválido.' }
+  if (naiaId) {
+    const ownerId = safePayload.owner_id ?? naiaId
+    safePayload.owner_id = ownerId
+  }
   const { error } = await db.rpc('fn_create_lead_for_user', { p_payload: safePayload, p_user_id: user.id })
   if (error) return { ok: false, erro: error.message }
   recarregar()
@@ -545,8 +604,14 @@ export async function adicionarTarefa(
 ): Promise<Resultado> {
   await requireOpportunityAccess(oppId)
   if (!dados.title.trim()) return { ok: false, erro: 'Informe o assunto da tarefa.' }
+  if (dados.ownerId) {
+    const { data: responsavel, error: responsavelError } = await db.from('profiles').select('role').eq('id', dados.ownerId).maybeSingle()
+    if (responsavelError) return { ok: false, erro: responsavelError.message }
+    if (responsavel?.role === 'ia') return { ok: false, erro: 'Naia não pode ser responsável por tarefa.' }
+  }
 
-  const due = dados.date ? new Date(`${dados.date}T${dados.time || '09:00'}`).toISOString() : null
+  const due = dados.date ? dataHoraBrasilParaIso(`${dados.date}T${dados.time || '09:00'}`) : null
+  if (dados.date && !due) return { ok: false, erro: 'Data ou hora inválida.' }
 
   const { error } = await db.from('tasks').insert({
     opportunity_id: oppId,
@@ -578,7 +643,7 @@ export async function alternarTarefa(id: number, oppId: string, concluir: boolea
 
 /** Anexa a proposta como documento (arquivo no Storage) — versão automática. */
 export async function subirProposta(oppId: string, form: FormData): Promise<Resultado> {
-  await requireOpportunityAccess(oppId)
+  const { user } = await requireOpportunityAccess(oppId)
   const file = form.get('file') as File | null
   if (!(file instanceof File) || file.size === 0) return { ok: false, erro: 'Selecione o documento da proposta.' }
   if (file.size > 25 * 1024 * 1024) return { ok: false, erro: 'Arquivo acima de 25 MB.' }
@@ -612,8 +677,9 @@ export async function subirProposta(oppId: string, form: FormData): Promise<Resu
     file_size: file.size,
   })
   if (error) return { ok: false, erro: error.message }
+  const aviso = await moverEtapaAutomatica(oppId, user.id, { envio_proposta: 'apresentacao_proposta' })
   recarregar(oppId)
-  return { ok: true }
+  return aviso ? { ok: true, aviso } : { ok: true }
 }
 
 export async function removerProposta(id: string, oppId: string, _path?: string | null): Promise<Resultado> {
@@ -653,14 +719,8 @@ async function recomputarValores(oppId: string) {
     .select('quantity, mrr, discount, recurrence')
     .eq('opportunity_id', oppId)
 
-  let mensal = 0
-  let unico = 0
-  for (const p of data ?? []) {
-    const linha = Math.max(0, Number(p.quantity ?? 1) * Number(p.mrr ?? 0) - Number(p.discount ?? 0))
-    if (p.recurrence === 'mensal') mensal += linha
-    else unico += linha
-  }
-  await db.from('opportunities').update({ expected_value: mensal, setup_value: unico }).eq('id', oppId)
+  const valores = calcularValoresProdutos(data ?? [])
+  await db.from('opportunities').update({ expected_value: valores.expectedValue, setup_value: valores.setupValue }).eq('id', oppId)
 }
 
 export async function adicionarProduto(
@@ -668,6 +728,9 @@ export async function adicionarProduto(
   dados: { productId: number; quantity: number; unitValue: number; recurrence: string; discount: number }
 ): Promise<Resultado> {
   await requireOpportunityAccess(oppId)
+  if (!Number.isInteger(dados.productId) || dados.productId < 1) return { ok: false, erro: 'Produto inválido.' }
+  const erro = validarDadosProduto(dados)
+  if (erro) return { ok: false, erro }
   const { error } = await db.from('opportunity_products').insert({
     opportunity_id: oppId,
     product_id: dados.productId,
@@ -676,6 +739,27 @@ export async function adicionarProduto(
     recurrence: dados.recurrence,
     discount: dados.discount,
   })
+  if (error) return { ok: false, erro: error.message }
+  await recomputarValores(oppId)
+  recarregar(oppId)
+  return { ok: true }
+}
+
+export async function editarProduto(
+  id: number,
+  oppId: string,
+  dados: { quantity: number; unitValue: number; recurrence: string; discount: number }
+): Promise<Resultado> {
+  await requireOpportunityAccess(oppId)
+  if (!Number.isInteger(id) || id < 1) return { ok: false, erro: 'Produto inválido.' }
+  const erro = validarDadosProduto(dados)
+  if (erro) return { ok: false, erro }
+  const { error } = await db.from('opportunity_products').update({
+    quantity: dados.quantity,
+    mrr: dados.unitValue,
+    recurrence: dados.recurrence,
+    discount: dados.discount,
+  }).eq('id', id).eq('opportunity_id', oppId)
   if (error) return { ok: false, erro: error.message }
   await recomputarValores(oppId)
   recarregar(oppId)
@@ -772,7 +856,7 @@ export async function contextoDeal(oppId: string): Promise<ContextoDeal | null> 
     db.from('opportunity_products').select('id, quantity, mrr, recurrence, discount, products(name)').eq('opportunity_id', oppId),
     db.from('products').select('id, name').eq('active', true).order('sort_order'),
     db.from('notes').select('id, body, created_at').eq('opportunity_id', oppId).order('created_at', { ascending: false }),
-    db.from('profiles').select('id, full_name').eq('is_active', true).order('full_name'),
+    db.from('profiles').select('id, full_name').eq('is_active', true).neq('role', 'ia').order('full_name'),
   ])
 
   const o = oppRes.data as Record<string, unknown> | null

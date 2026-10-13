@@ -18,6 +18,16 @@ export function integrationAuthorized(req: Request, expected: string | undefined
     secretMatches(expected, new URL(req.url).searchParams.get('secret')) || secretMatches(expected, bodySecret)
 }
 
+// Para ENDPOINT NOVO: regra da casa sem exceção — segredo só em header.
+// Nunca aceita query string nem body, nem para compatibilidade. Use esta,
+// não integrationAuthorized, em toda rota nova.
+export function integrationAuthorizedHeaderOnly(req: Request, expected: string | undefined, headerCustom?: string): boolean {
+  const header = req.headers.get('authorization')
+  if (header !== null) return header.startsWith('Bearer ') && secretMatches(expected, header.slice(7))
+  return secretMatches(expected, req.headers.get('x-api-key')) ||
+    (!!headerCustom && secretMatches(expected, req.headers.get(headerCustom)))
+}
+
 export async function readBoundedJson(req: Request, maxBytes = 256 * 1024): Promise<Record<string, unknown>> {
   if (Number(req.headers.get('content-length')) > maxBytes) throw new Error('Payload muito grande.')
   if (!req.body) throw new Error('JSON ausente.')

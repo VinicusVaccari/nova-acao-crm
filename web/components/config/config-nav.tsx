@@ -12,6 +12,8 @@ const SECOES = [
   { href: '/configuracoes/motivos-perda', label: 'Motivos de perda', pronto: true },
   { href: '/configuracoes/produtos', label: 'Produtos e serviços', pronto: true },
   { href: '/configuracoes/campos', label: 'Campos dos deals', pronto: true },
+  { href: '/configuracoes/follow-up', label: 'Follow-up', pronto: true },
+  { href: '/configuracoes/agentes-mcp', label: 'Agentes MCP', pronto: true },
 ]
 
 export function ConfigNav() {

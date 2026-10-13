@@ -15,10 +15,16 @@ export function proxy(req: NextRequest) {
   const publica =
     rota.startsWith('/login') ||
     rota.startsWith('/convite') ||
+    rota.startsWith('/esqueci-senha') ||
+    rota.startsWith('/recuperar-senha') ||
+    rota.startsWith('/.well-known') ||
+    rota.startsWith('/api/mcp') ||
     rota.startsWith('/api/ingest') ||
     rota.startsWith('/api/whatsapp') ||
     rota.startsWith('/api/naia') ||
-    rota.startsWith('/api/outreach')
+    rota.startsWith('/api/outreach') ||
+    rota.startsWith('/api/followup') ||
+    rota.startsWith('/api/luna')
 
   // cookie do @supabase/ssr: sb-<ref>-auth-token (pode vir em pedaços .0/.1)
   const temSessao = req.cookies.getAll().some(c => c.name.startsWith('sb-') && c.name.includes('-auth-token'))

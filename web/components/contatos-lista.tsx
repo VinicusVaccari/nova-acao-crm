@@ -23,7 +23,7 @@ type Ordem = 'nome' | 'empresa' | 'negociacoes' | 'ultimo_contato'
 function dataContato(iso: string | null): string {
   if (!iso) return 'Não realizado'
   const d = new Date(iso)
-  return `${d.toLocaleDateString('pt-BR')} às ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+  return `${d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })} às ${d.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })}`
 }
 
 export function ContatosLista({ contatos }: { contatos: ContatoRow[] }) {

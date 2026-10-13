@@ -14,9 +14,14 @@ export type Filtros = {
   produtoId: number
   valorMin?: number
   valorMax?: number
+  // 'rodrigues' cobre os dois estados travados (Travado e Você) — os dois
+  // são dele; só a Naia importa distinguir dos dois no filtro.
+  atendimento: '' | 'naia' | 'rodrigues'
+  // Cadência de qualificação (followup_disparos) — só "está ou não está".
+  followup: '' | 'sim'
 }
 
-export const filtroVazio: Filtros = { status: '', criacao: '', qualMin: 0, busca: '', produtoId: 0 }
+export const filtroVazio: Filtros = { status: '', criacao: '', qualMin: 0, busca: '', produtoId: 0, atendimento: '', followup: '' }
 
 export function contarFiltros(f: Filtros): number {
   let n = 0
@@ -26,6 +31,8 @@ export function contarFiltros(f: Filtros): number {
   if (f.busca.trim()) n++
   if (f.produtoId) n++
   if ((f.valorMin ?? 0) > 0 || (f.valorMax ?? 0) > 0) n++
+  if (f.atendimento) n++
+  if (f.followup) n++
   return n
 }
 
@@ -65,6 +72,11 @@ export function aplicarFiltros(cards: CardPipeline[], f: Filtros): CardPipeline[
     if (f.produtoId && !c.produtoIds.includes(f.produtoId)) return false
     if ((f.valorMin ?? 0) > 0 && c.contractValue < (f.valorMin as number)) return false
     if ((f.valorMax ?? 0) > 0 && c.contractValue > (f.valorMax as number)) return false
+    if (f.atendimento) {
+      const grupo = c.atendimento === 'naia' ? 'naia' : c.atendimento ? 'rodrigues' : null
+      if (grupo !== f.atendimento) return false
+    }
+    if (f.followup === 'sim' && !c.followup) return false
     return true
   })
 }
@@ -165,6 +177,23 @@ export function FiltrosDrawer({
       <label className="flex flex-col gap-1">
         <span className="campo-label">Nome (empresa, contato ou negócio)</span>
         <input className="field" placeholder="Buscar…" value={d.busca} onChange={e => set({ busca: e.target.value })} />
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="campo-label">Atendimento</span>
+        <select className="field" value={d.atendimento} onChange={e => set({ atendimento: e.target.value as Filtros['atendimento'] })}>
+          <option value="">Todos</option>
+          <option value="naia">Naia</option>
+          <option value="rodrigues">Rodrigues</option>
+        </select>
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="campo-label">Follow-up</span>
+        <select className="field" value={d.followup} onChange={e => set({ followup: e.target.value as Filtros['followup'] })}>
+          <option value="">Todos</option>
+          <option value="sim">Em cadência de follow-up</option>
+        </select>
       </label>
 
       <label className="flex flex-col gap-1">

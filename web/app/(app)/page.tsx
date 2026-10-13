@@ -2,14 +2,15 @@ import { userDatabase } from '@/lib/security/user-db'
 import Link from 'next/link'
 import { brl, brlCurto, dur, num } from '@/lib/format'
 import { Painel, Secao, Selo } from '@/components/ui'
+import { eMesmoDiaBrasil, formatarNoHorarioBrasil, limitesDoDiaBrasil } from '@/lib/horario-brasil'
 
 export const dynamic = 'force-dynamic'
 
 const hora = (iso: string) =>
-  new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  formatarNoHorarioBrasil(iso, { hour: '2-digit', minute: '2-digit' })
 
 const dia = (iso: string) =>
-  new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
+  formatarNoHorarioBrasil(iso, { day: '2-digit', month: 'short' })
 
 /* -----------------------------------------------------------------
    A tela que abre o dia. Não é dashboard: é fila de trabalho.
@@ -18,8 +19,7 @@ const dia = (iso: string) =>
 export default async function Hoje() {
   const db = await userDatabase()
   const agora = new Date()
-  const fimDoDia = new Date(agora)
-  fimDoDia.setHours(23, 59, 59)
+  const { fim: fimDoDia } = limitesDoDiaBrasil(agora)
   const em48h = new Date(agora.getTime() + 48 * 3600 * 1000)
 
   const [sla, reunioesHoje, acoesVencidas, parados, semAcao] = await Promise.all([
@@ -64,7 +64,7 @@ export default async function Hoje() {
       <div className="mb-6">
         <h1 className="text-[19px] font-semibold tracking-tight">Hoje</h1>
         <p className="text-[13px] mt-0.5" style={{ color: 'var(--ink-muted)' }}>
-          {agora.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })} · o que precisa
+          {formatarNoHorarioBrasil(agora, { weekday: 'long', day: '2-digit', month: 'long' })} · o que precisa
           da sua mão agora, na ordem em que custa dinheiro
         </p>
       </div>
@@ -114,7 +114,7 @@ export default async function Hoje() {
               {reunioes.map(m => {
                 const n = nome(m.opportunities)
                 const dt = new Date(m.scheduled_at as string)
-                const hoje = dt.toDateString() === agora.toDateString()
+                const hoje = eMesmoDiaBrasil(dt, agora)
                 return (
                   <Link
                     key={m.id as string}

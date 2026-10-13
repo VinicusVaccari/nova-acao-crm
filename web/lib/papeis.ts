@@ -14,5 +14,6 @@ export type Papel = (typeof PAPEIS)[number]['v']
 export const PAPEIS_VALIDOS = new Set(PAPEIS.map(p => p.v))
 
 export function papelLabel(v: string) {
+  if (v === 'ia') return 'Naia (IA)'
   return PAPEIS.find(p => p.v === v)?.label ?? v
 }

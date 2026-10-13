@@ -7,7 +7,7 @@ import {
   adicionarNota, removerNota,
   adicionarTarefa, alternarTarefa,
   subirProposta, removerProposta, definirStatusProposta,
-  adicionarProduto, removerProduto,
+  adicionarProduto, editarProduto, removerProduto,
   subirArquivo, removerArquivo,
 } from '@/lib/actions'
 import { AgendarReuniao, PresencaReuniao } from '@/components/ficha-acoes'
@@ -15,10 +15,11 @@ import { Drawer } from '@/components/drawer'
 import { Selo } from '@/components/ui'
 import { useLabelEstagio } from '@/components/estagios-context'
 import { brl } from '@/lib/format'
+import { formatarNoHorarioBrasil, limitesDoDiaBrasil } from '@/lib/horario-brasil'
 
 const quando = (iso: string) =>
-  new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
-const dia = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: '2-digit' })
+  formatarNoHorarioBrasil(iso, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+const dia = (iso: string) => formatarNoHorarioBrasil(iso, { day: '2-digit', month: 'short', year: '2-digit' })
 
 /* ícones das abas — traço fino, 20px grid */
 const svg = (p: React.ReactNode) => (
@@ -43,12 +44,12 @@ type Dados = {
   empresaNome?: string
   usuarios: { id: string; full_name: string }[]
   atividades: any[]; atividadesTruncadas?: boolean; historico: any[]; reunioes: any[]; propostas: any[]
-  notas: any[]; tarefas: any[]; produtos: any[]; catalogo: any[]; arquivos: any[]
+  notas: any[]; tarefas: any[]; produtos: any[]; catalogo: any[]; arquivos: any[]; followups: any[]
 }
 
 const FUNIL = 'Nova Ação | Funil'
 const dataHora = (iso: string) =>
-  new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  formatarNoHorarioBrasil(iso, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
 const ABAS = [
   ['historico', 'Histórico'],
@@ -151,6 +152,24 @@ function Historico({ d }: { d: Dados }) {
       at: p.sent_at ?? p.created_at, ator,
       texto: <>anexou a <b>proposta v{p.version}</b>{p.status !== 'enviada' ? ` — ${p.status}` : ''} no funil {FUNIL}</>,
     })),
+    // Cadência de follow-up (diário em followup_disparos) — reservado/
+    // enviando são estados de trânsito, não aparecem na linha do tempo.
+    ...d.followups
+      .filter((f: any) => f.status !== 'reservado' && f.status !== 'enviando')
+      .map((f: any): Ev => {
+        const at = f.enviado_em ?? f.erro_em ?? f.reservado_em
+        const versao = f.prompt_versao ? ` · ${f.prompt_versao}` : ''
+        const modelo = f.modelo ? ` · ${f.modelo}` : ''
+        if (f.status === 'enviado')
+          return { at, ator: 'SDR (IA)', texto: <>enviou <b>follow-up {f.toque} de 3</b> — &quot;{f.texto_enviado}&quot;{versao}{modelo}</> }
+        if (f.status === 'sombra')
+          return { at, ator: 'SDR (IA)', texto: <>gerou <b>follow-up {f.toque} de 3</b> (modo sombra — não enviado) — &quot;{f.texto_gerado}&quot;{versao}{modelo}</> }
+        if (f.status === 'falhou')
+          return { at, ator: 'SDR (IA)', texto: <>não conseguiu enviar o <b>follow-up {f.toque} de 3</b> — {f.erro ?? 'falha no envio'}</> }
+        if (f.status === 'indeterminado')
+          return { at, ator: 'SDR (IA)', texto: <><b>follow-up {f.toque} de 3</b> ficou indeterminado — não se sabe se a mensagem saiu</> }
+        return { at, ator: 'SDR (IA)', texto: <>cancelou o <b>follow-up {f.toque} de 3</b>{f.motivo ? ` — ${f.motivo}` : ''}</> }
+      }),
   ].sort((a, b) => String(b.at).localeCompare(String(a.at)))
 
   if (d.criadoEm) ev.push({ at: d.criadoEm, especial: true, texto: <b>Negócio criado</b> })
@@ -251,8 +270,8 @@ function Tarefas({
   const [pendente, start] = useTransition()
 
   const hoje = new Date()
-  const dataPadrao = hoje.toISOString().slice(0, 10)
-  const horaPadrao = hoje.toTimeString().slice(0, 5)
+  const { ymd: dataPadrao } = limitesDoDiaBrasil(hoje)
+  const horaPadrao = formatarNoHorarioBrasil(hoje, { hour: '2-digit', minute: '2-digit', hour12: false })
 
   function enviar(fd: FormData) {
     setErro(null)
@@ -424,13 +443,16 @@ function Reunioes({ oppId, reunioes }: { oppId: string; reunioes: any[] }) {
 
 function Propostas({ oppId, propostas }: { oppId: string; propostas: any[] }) {
   const [erro, setErro] = useState<string | null>(null)
+  const [aviso, setAviso] = useState<string | null>(null)
   const [pendente, start] = useTransition()
 
   function enviar(fd: FormData) {
     setErro(null)
+    setAviso(null)
     start(async () => {
       const r = await subirProposta(oppId, fd)
       if (!r.ok) setErro(r.erro)
+      else setAviso(r.aviso ?? null)
     })
   }
 
@@ -440,6 +462,7 @@ function Propostas({ oppId, propostas }: { oppId: string; propostas: any[] }) {
         <input name="file" type="file" className="field" style={{ width: 'auto', padding: '6px 8px', flex: 1, minWidth: 200 }} required />
         <button className="btn btn-primary btn-sm" disabled={pendente}>{pendente ? 'Enviando…' : 'Anexar proposta'}</button>
         {erro && <p className="t-sm" style={{ color: 'var(--critical)', width: '100%' }}>{erro}</p>}
+        <p className="t-sm" role="status" aria-live="polite" style={{ color: 'var(--warning)', width: '100%', minHeight: '1.25rem', visibility: aviso ? 'visible' : 'hidden' }}>{aviso ?? 'Aviso'}</p>
       </form>
 
       {propostas.length ? (
@@ -469,7 +492,7 @@ function PropostaItem({ p, oppId }: { p: any; oppId: string }) {
               Proposta v{p.version}{p.file_name ? ` · ${p.file_name}` : ''}
             </a>
             <div className="t-xs muted">
-              {p.file_size ? `${kb(Number(p.file_size))} · ` : ''}{p.sent_at ? new Date(p.sent_at).toLocaleDateString('pt-BR') : ''}
+              {p.file_size ? `${kb(Number(p.file_size))} · ` : ''}{p.sent_at ? new Date(p.sent_at).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : ''}
             </div>
           </div>
         </div>
@@ -495,6 +518,8 @@ function Produtos({ oppId, produtos, catalogo }: { oppId: string; produtos: any[
   const [aberto, setAberto] = useState(false)
   const [temDesc, setTemDesc] = useState(false)
   const [pendente, start] = useTransition()
+  const [editando, setEditando] = useState<any | null>(null)
+  const [precoEditado, setPrecoEditado] = useState(0)
 
   // preço/recorrência sobem sozinhos do catálogo ao escolher o produto (editável)
   const [unit, setUnit] = useState(0)
@@ -520,6 +545,21 @@ function Produtos({ oppId, produtos, catalogo }: { oppId: string; produtos: any[
         discount: temDesc ? Number(fd.get('discount') || 0) : 0,
       })
       if (r.ok) { setAberto(false); setTemDesc(false) }
+      else setErro(r.erro)
+    })
+  }
+
+  function enviarEdicao(fd: FormData) {
+    if (!editando) return
+    setErro(null)
+    start(async () => {
+      const r = await editarProduto(editando.id, oppId, {
+        quantity: Number(editando.quantity ?? 1),
+        unitValue: Number(fd.get('unit') || 0),
+        recurrence: String(editando.recurrence ?? 'unico'),
+        discount: Number(editando.discount ?? 0),
+      })
+      if (r.ok) setEditando(null)
       else setErro(r.erro)
     })
   }
@@ -587,6 +627,30 @@ function Produtos({ oppId, produtos, catalogo }: { oppId: string; produtos: any[
         </form>
       </Drawer>
 
+      <Drawer
+        titulo="Editar preço do produto ou serviço"
+        aberto={!!editando}
+        onClose={() => { setEditando(null); setErro(null) }}
+        footer={
+          <>
+            <button type="button" className="btn btn-ghost" onClick={() => { setEditando(null); setErro(null) }}>Cancelar</button>
+            <button type="submit" form="form-editar-produto" className="btn btn-primary" disabled={pendente}>{pendente ? 'Salvando…' : 'Salvar'}</button>
+          </>
+        }
+      >
+        <form id="form-editar-produto" action={enviarEdicao} className="flex flex-col" style={{ gap: 'var(--s-4)' }}>
+          <label className="flex flex-col gap-1">
+            <span className="campo-label">Produto ou serviço</span>
+            <span className="t-body">{editando?.products?.name}</span>
+          </label>
+          <label className="flex flex-col gap-1" style={{ maxWidth: 220 }}>
+            <span className="campo-label">Valor (R$)</span>
+            <input name="unit" type="number" min={0} step="0.01" value={precoEditado} onChange={e => setPrecoEditado(Number(e.target.value))} className="field" />
+          </label>
+          {erro && <p className="t-sm" style={{ color: 'var(--critical)' }}>{erro}</p>}
+        </form>
+      </Drawer>
+
       {produtos.length ? (
         <div className="flex flex-col" style={{ gap: 'var(--s-2)' }}>
           {produtos.map(p => (
@@ -601,6 +665,7 @@ function Produtos({ oppId, produtos, catalogo }: { oppId: string; produtos: any[
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 <span className="t-body tabular" style={{ fontWeight: 600 }}>{brl(linha(p))}{p.recurrence === 'mensal' ? '/mês' : ''}</span>
+                <button className="btn btn-ghost btn-sm" disabled={pendente} onClick={() => { setErro(null); setPrecoEditado(Number(p.mrr ?? 0)); setEditando(p) }}>editar preço</button>
                 <button className="remover-x" disabled={pendente} onClick={() => start(async () => { await removerProduto(p.id, oppId) })}>remover</button>
               </div>
             </div>

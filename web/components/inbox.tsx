@@ -5,16 +5,18 @@ import Link from 'next/link'
 import { Avatar, ContadorNaoLidas } from '@/components/ui'
 import { useEstagiosBoard, useCorEstagio } from '@/components/estagios-context'
 import { brlCurto } from '@/lib/format'
-import { adicionarNota, adicionarProduto, adicionarTarefa, atualizarContato, atualizarNegocio, contextoDeal, definirAtendimento, listarConversas, listarMensagens, marcarLida, moverEstagio, removerProduto, responderConversa, type ContextoDeal } from '@/lib/actions'
-import type { Conversa, Mensagem } from '@/lib/mensagens'
+import { adicionarNota, adicionarProduto, adicionarTarefa, atualizarContato, atualizarNegocio, definirAtendimento, marcarLida, moverEstagio, removerProduto, responderConversa, type ContextoDeal } from '@/lib/actions'
+import type { Conversa } from '@/lib/mensagens'
+import { acompanharInbox, lerInbox } from '@/lib/inbox-client'
+import { useInboxFio } from '@/components/use-inbox-fio'
 
-const hora = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+const hora = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })
 
 function quandoCurto(iso: string) {
   const d = new Date(iso)
   const hoje = new Date()
   if (d.toDateString() === hoje.toDateString()) return hora(iso)
-  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+  return d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' })
 }
 
 const mmss = (s: number) => {
@@ -150,14 +152,6 @@ function statusConversa(c: Conversa): keyof typeof badgesStatus {
   return 'naia'
 }
 
-/* Mensagem já carregada não é substituída: a URL assinada do áudio muda a
-   cada consulta, e trocá-la reiniciaria o player no meio da reprodução. */
-function mesclar(atuais: Mensagem[], novas: Mensagem[]): Mensagem[] {
-  const porId = new Map(atuais.map(m => [m.id, m]))
-  for (const m of novas) if (!porId.has(m.id)) porId.set(m.id, m)
-  return [...porId.values()].sort((a, b) => a.at.localeCompare(b.at) || a.id - b.id)
-}
-
 export function Inbox({ conversas, selInicial }: { conversas: Conversa[]; selInicial?: string | null }) {
   const [convs, setConvs] = useState<Conversa[]>(conversas)
   const [selId, setSelId] = useState<string | null>(
@@ -168,75 +162,15 @@ export function Inbox({ conversas, selInicial }: { conversas: Conversa[]; selIni
   const [, startTop] = useTransition()
   const fioRef = useRef<HTMLDivElement>(null)
 
-  // fio da conversa aberta: carregado sob demanda, do mais novo para trás
-  const [mensagens, setMensagens] = useState<Mensagem[]>([])
-  const [temMais, setTemMais] = useState(false)
-  const [carregando, setCarregando] = useState(true)
+  const [revisao, setRevisao] = useState(0)
+  const { mensagens, temMais, carregando, erro, carregarAnteriores } = useInboxFio(selId, revisao)
+  const recarregar = () => { setRevisao(v => v + 1) }
 
-  const recarregar = async () => {
-    try {
-      const [frescas, fio] = await Promise.all([
-        listarConversas(),
-        selId ? listarMensagens(selId) : Promise.resolve(null),
-      ])
-      setConvs(frescas)
-      if (fio) { setMensagens(prev => mesclar(prev, fio.mensagens)); setTemMais(m => m || fio.temMais) }
-    } catch { /* próximo tick */ }
-  }
-
-  /* Trocar de conversa zera o fio já na renderização. Limpar dentro do efeito
-     pintaria a conversa nova com as mensagens da anterior por um quadro. */
-  const [fioDe, setFioDe] = useState(selId)
-  if (fioDe !== selId) {
-    setFioDe(selId)
-    setMensagens([])
-    setTemMais(false)
-    setCarregando(!!selId)
-  }
-
-  // e o efeito só busca a página mais recente da conversa aberta
-  useEffect(() => {
-    if (!selId) return
-    let ativo = true
-    listarMensagens(selId)
-      .then(r => { if (!ativo) return; setMensagens(r.mensagens); setTemMais(r.temMais) })
-      .catch(() => { /* o polling tenta de novo */ })
-      .finally(() => { if (ativo) setCarregando(false) })
-    return () => { ativo = false }
-  }, [selId])
-
-  // atualiza sozinho a cada 2s (só com a aba visível): a lista de conversas
-  // e as mensagens novas da conversa aberta
-  useEffect(() => {
-    let ativo = true
-    const tick = async () => {
-      if (typeof document !== 'undefined' && document.hidden) return
-      try {
-        const [frescas, fio] = await Promise.all([
-          listarConversas(),
-          selId ? listarMensagens(selId) : Promise.resolve(null),
-        ])
-        if (!ativo) return
-        setConvs(frescas)
-        if (fio) setMensagens(prev => mesclar(prev, fio.mensagens))
-      } catch { /* rede — tenta no próximo tick */ }
-    }
-    const id = setInterval(tick, 2000)
-    // recarrega na hora quando a aba volta a ficar visível (sem esperar o tick)
-    const onVis = () => { if (typeof document !== 'undefined' && !document.hidden) void tick() }
-    document.addEventListener('visibilitychange', onVis)
-    return () => { ativo = false; clearInterval(id); document.removeEventListener('visibilitychange', onVis) }
-  }, [selId])
-
-  const carregarAnteriores = () => {
-    const maisAntiga = mensagens[0]
-    if (!selId || !maisAntiga || carregando) return
-    setCarregando(true)
-    listarMensagens(selId, maisAntiga.at)
-      .then(r => { setMensagens(prev => mesclar(prev, r.mensagens)); setTemMais(r.temMais) })
-      .catch(() => { /* mantém o que já está na tela */ })
-      .finally(() => setCarregando(false))
-  }
+  // A lista e o fio atualizam de forma independente, sem bloquear a abertura.
+  useEffect(() => acompanharInbox(async signal => {
+    const frescas = await lerInbox('conversas', {}, signal)
+    if (!signal.aborted) setConvs(frescas)
+  }, 2000, revisao > 0), [revisao])
 
   // assumir a conversa (trava permanente — a Naia não volta pra esse lead)
   const assumir = (c: Conversa) =>
@@ -261,7 +195,7 @@ export function Inbox({ conversas, selInicial }: { conversas: Conversa[]; selIni
      tratada como lida na renderização, o que evita o badge piscar de volta
      no intervalo entre o polling de 2s e a gravação. */
   useEffect(() => {
-    if (!selId) return
+    if (!selId || !ultimaId) return
     marcarLida(selId).catch(() => { /* o próximo tick tenta de novo */ })
   }, [selId, ultimaId])
 
@@ -338,6 +272,7 @@ export function Inbox({ conversas, selInicial }: { conversas: Conversa[]; selIni
             </div>
 
             <div ref={fioRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 'var(--s-5)', display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
+              {erro && <p className="t-sm muted" role="status">{erro}</p>}
               {temMais && (
                 <button
                   className="btn btn-ghost btn-sm"
@@ -350,7 +285,7 @@ export function Inbox({ conversas, selInicial }: { conversas: Conversa[]; selIni
               )}
               {!temMais && mensagens.length === 0 && (
                 <p className="t-sm muted" style={{ alignSelf: 'center' }}>
-                  {carregando ? 'Carregando mensagens…' : 'Nenhuma mensagem nesta conversa.'}
+                  {erro ? 'Aguardando nova tentativa' : carregando ? 'Carregando mensagens…' : 'Nenhuma mensagem nesta conversa.'}
                 </p>
               )}
               {mensagens.map(m => {
@@ -386,7 +321,7 @@ export function Inbox({ conversas, selInicial }: { conversas: Conversa[]; selIni
 
       {/* ---------- contexto do negócio (editável) ---------- */}
       <div className="inbox-ctx">
-        {sel ? <ContextoPainel key={sel.oppId} oppId={sel.oppId} /> : null}
+        {ctx && sel ? <ContextoPainel key={sel.oppId} oppId={sel.oppId} /> : null}
       </div>
     </div>
   )
@@ -441,8 +376,17 @@ function ContextoPainel({ oppId }: { oppId: string }) {
   const ESTAGIOS = useEstagiosBoard()
   const corEstagio = useCorEstagio()
 
-  const recarregar = () => contextoDeal(oppId).then(setCtx)
-  useEffect(() => { recarregar() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [oppId])
+  const [erro, setErro] = useState(false)
+  const recarregar = () => lerInbox('contexto', { oppId }).then(setCtx)
+  useEffect(() => {
+    const controller = new AbortController()
+    lerInbox('contexto', { oppId }, controller.signal)
+      .then(r => { if (!controller.signal.aborted) setCtx(r) })
+      .catch(() => { if (!controller.signal.aborted) setErro(true) })
+    return () => controller.abort()
+  }, [oppId])
+
+  if (erro) return <p className="t-sm muted">Não foi possível carregar o contexto.</p>
 
   if (!ctx) return <p className="t-sm muted" style={{ padding: 'var(--s-2)' }}>Carregando…</p>
 
@@ -496,7 +440,7 @@ function ContextoPainel({ oppId }: { oppId: string }) {
         <label className="flex flex-col gap-1" style={{ marginTop: 'var(--s-2)' }}>
           <span className="ctx-rotulo">Responsável</span>
           <select className="field" value={ctx.ownerId ?? ''} disabled={pend} onChange={e => acao(() => atualizarNegocio(oppId, { owner_id: e.target.value || null }))}>
-            <option value="">Sem dono</option>
+            {ctx.ownerId === null && <option value="" disabled>Naia (IA)</option>}
             {ctx.usuarios.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
           </select>
         </label>
@@ -641,7 +585,7 @@ function TarefaRapida({ oppId, nextStep, nextStepDue, usuarios, onFeito }: {
       {nextStep ? (
         <div className="inset" style={{ padding: 'var(--s-2) var(--s-3)' }}>
           <div className="t-sm">{nextStep}</div>
-          {nextStepDue && <div className="t-xs tabular" style={{ color: atrasada ? 'var(--critical)' : 'var(--ink-muted)' }}>{new Date(nextStepDue).toLocaleDateString('pt-BR')}{atrasada ? ' · atrasada' : ''}</div>}
+        {nextStepDue && <div className="t-xs tabular" style={{ color: atrasada ? 'var(--critical)' : 'var(--ink-muted)' }}>{new Date(nextStepDue).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}{atrasada ? ' · atrasada' : ''}</div>}
         </div>
       ) : (
         <p className="t-xs muted">Sem tarefa pendente.</p>
@@ -674,7 +618,7 @@ function NotasRapidas({ oppId, notas, onFeito }: { oppId: string; notas: { id: n
           {notas.map(n => (
             <div key={n.id} className="inset" style={{ padding: 'var(--s-2) var(--s-3)' }}>
               <div className="t-sm" style={{ whiteSpace: 'pre-wrap' }}>{n.body}</div>
-              <div className="t-xs muted tabular" style={{ marginTop: 2 }}>{new Date(n.created_at).toLocaleDateString('pt-BR')}</div>
+            <div className="t-xs muted tabular" style={{ marginTop: 2 }}>{new Date(n.created_at).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</div>
             </div>
           ))}
         </div>

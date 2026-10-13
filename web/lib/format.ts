@@ -36,5 +36,5 @@ export const dias = (v: number | null | undefined) => `${n1.format(Number(v ?? 0
 /** '2026-07-27' -> '27/jul' */
 export const dataCurta = (iso: string) => {
   const d = new Date(iso + (iso.length === 10 ? 'T12:00:00' : ''))
-  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).replace('.', '')
+  return d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: 'short' }).replace('.', '')
 }

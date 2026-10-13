@@ -2,8 +2,8 @@ import type { ReactNode } from 'react'
 
 /* ---------------- Avatar com iniciais ---------------- */
 
-export function iniciais(nome: string): string {
-  const p = nome.trim().split(/\s+/).filter(Boolean)
+export function iniciais(nome: string | null | undefined): string {
+  const p = (typeof nome === 'string' ? nome : '').trim().split(/\s+/).filter(Boolean)
   if (!p.length) return '?'
   if (p.length === 1) return p[0].slice(0, 2).toUpperCase()
   return (p[0][0] + p[p.length - 1][0]).toUpperCase()
@@ -11,7 +11,8 @@ export function iniciais(nome: string): string {
 
 /** Deriva uma cor estável a partir do nome — mesmo lead, mesma cor sempre. */
 const PALETA_AV = ['#01aaaf', '#6366f1', '#8b5cf6', '#0e8ecf', '#f97316', '#0d8f52', '#a855f7', '#d19a10']
-export function corDoNome(nome: string): string {
+export function corDoNome(nome: string | null | undefined): string {
+  nome = typeof nome === 'string' ? nome : ''
   let h = 0
   for (let i = 0; i < nome.length; i++) h = (h * 31 + nome.charCodeAt(i)) >>> 0
   return PALETA_AV[h % PALETA_AV.length]
@@ -23,17 +24,18 @@ export function Avatar({
   tamanho = 36,
   cor,
 }: {
-  nome: string
+  nome: string | null | undefined
   src?: string | null
   tamanho?: number
   cor?: string
 }) {
+  const nomeSeguro = typeof nome === 'string' ? nome : ''
   if (src) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
         src={src}
-        alt={nome}
+        alt={nomeSeguro}
         width={tamanho}
         height={tamanho}
         className="avatar"
@@ -49,11 +51,11 @@ export function Avatar({
           width: tamanho,
           height: tamanho,
           fontSize: Math.round(tamanho * 0.38),
-          '--av': cor ?? corDoNome(nome),
+          '--av': cor ?? corDoNome(nomeSeguro),
         } as React.CSSProperties
       }
     >
-      {iniciais(nome)}
+      {iniciais(nomeSeguro)}
     </span>
   )
 }

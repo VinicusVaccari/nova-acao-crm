@@ -1,7 +1,7 @@
 import { integrationAuthorized, readBoundedJson, integrationRateLimit } from '@/lib/security/integration'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { enviarWhatsapp } from '@/lib/whatsapp'
+import { buscarIdentidadeTelefone, enviarComoNaia } from '@/lib/whatsapp'
 
 /* -----------------------------------------------------------------
    Webhook de RESPOSTA DA NAIA. O n8n chama aqui com o texto a enviar;
@@ -41,9 +41,7 @@ export async function POST(req: Request) {
   // completa o que faltar: telefone ⇄ oportunidade
   if (telefone && !oppId) {
     const digits = String(telefone).replace(/\D/g, '')
-    const { data: ident } = await db
-      .from('identities').select('person_id')
-      .in('kind', ['phone', 'wa_id']).in('value', ['+' + digits, digits]).limit(1).maybeSingle()
+    const { identidade: ident } = await buscarIdentidadeTelefone(db, digits)
     if (ident?.person_id) {
       const { data: opp } = await db
         .from('opportunities').select('id')
@@ -61,20 +59,16 @@ export async function POST(req: Request) {
   if (!telefone) return NextResponse.json({ erro: 'sem telefone de destino' }, { status: 400 })
 
   const delay = Number(body.delayTyping)
-  const { ok: enviado, messageId } = await enviarWhatsapp(telefone, mensagem, Number.isFinite(delay) ? delay : 5)
-
-  if (oppId) {
-    await db.rpc('fn_log_activity', {
-      p_opportunity_id: oppId,
-      p_kind: 'whatsapp',
-      p_direction: 'outbound',
-      p_body: mensagem,
-      p_is_automated: true, // tudo que vem do n8n é da Naia
-      p_outcome: enviado ? 'enviado' : null,
-      // guarda o messageId → o eco (fromMe) correlaciona e aprende o LID
-      p_meta: messageId ? { messageId } : {},
-    })
-  }
+  // ÚNICO caminho de envio automatizado — o mesmo que o executor da
+  // cadência de follow-up usa. Contrato desta rota inalterado: mesmo
+  // body, mesma resposta, mesmo status.
+  const { ok: enviado, logErro } = await enviarComoNaia({
+    telefone, mensagem, opportunityId: oppId, delayTyping: Number.isFinite(delay) ? delay : 5,
+  })
+  // Não muda o contrato (mesmo body/resposta/status), mas não engole a
+  // falha em silêncio: sem a activity, a próxima janela de silêncio do
+  // follow-up contaria a partir da mensagem errada.
+  if (logErro) console.error('enviarComoNaia: falha ao registrar atividade —', logErro)
 
   return NextResponse.json({ ok: enviado, opportunityId: oppId })
 }

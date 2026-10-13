@@ -21,6 +21,7 @@ import { reordenarCard } from '@/lib/actions'
 import { type CardPipeline, type Estagio } from '@/lib/estagios'
 import { useEstagiosBoard } from '@/components/estagios-context'
 import { FiltrosDrawer, aplicarFiltros, contarFiltros, filtroVazio, type Filtros } from '@/components/filtros-pipeline'
+import { filtrosIniciais, persistirFiltros } from '@/lib/filtros-pipeline-url'
 import { brlCurto } from '@/lib/format'
 
 /* -----------------------------------------------------------------
@@ -31,6 +32,7 @@ import { brlCurto } from '@/lib/format'
    ----------------------------------------------------------------- */
 
 const GAP = 65536
+const FILTRO_SALVO = 'pipeline:filtros'
 
 type Cols = Record<string, CardPipeline[]>
 
@@ -40,7 +42,27 @@ function agrupar(cards: CardPipeline[], ordem: string[]): Cols {
   return m
 }
 
+export function recomporColunasAposFalha(cards: CardPipeline[], filtros: Filtros, ordem: string[]): Cols {
+  return agrupar(aplicarFiltros(cards, filtros), ordem)
+}
+
+export function proximaReavaliacao(agora: Date): number {
+  return new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 1).getTime()
+}
+
 /* ---------------- Conteúdo visual (reusado no overlay) ---------------- */
+
+/* Exibição PRÓPRIA da pipeline — não reaproveita o badgesStatus do inbox
+   (web/components/inbox.tsx), que continua com os três estados (Naia /
+   Travado / Você) e não muda. Aqui o card só distingue Naia de Rodrigues:
+   travado e voce são o mesmo dono, só muda se ele já respondeu ou não — a
+   pipeline não precisa dessa distinção. Cor de Rodrigues é a do "voce"
+   (var(--series-3)): é dono, não alerta, não usa a laranja do travado. */
+const ATENDIMENTO_CHIP = {
+  naia:    { texto: 'Naia',      cor: 'var(--brand-teal)' },
+  travado: { texto: 'Rodrigues', cor: 'var(--series-3)' },
+  voce:    { texto: 'Rodrigues', cor: 'var(--series-3)' },
+} as const
 
 const CardVisual = memo(function CardVisual({ c, comLink = true }: { c: CardPipeline; comLink?: boolean }) {
   // "parado há": dias desde a última interação (qualquer atividade).
@@ -63,6 +85,8 @@ const CardVisual = memo(function CardVisual({ c, comLink = true }: { c: CardPipe
   }[c.status]
 
   const temTarefa = !!c.next_step
+  const atendimento = c.atendimento ? ATENDIMENTO_CHIP[c.atendimento] : null
+  const followup = c.followup
 
   const corpo = (
     <>
@@ -85,8 +109,42 @@ const CardVisual = memo(function CardVisual({ c, comLink = true }: { c: CardPipe
 
       <div className="min-w-0">
         <div className="t-h2 truncate" style={{ fontSize: 'var(--text-md)', lineHeight: 1.3 }}>{c.nome}</div>
-        {/* sempre reserva a linha da empresa para o card ter a MESMA altura com ou sem empresa */}
-        <div className="t-sm muted truncate" aria-hidden={!c.empresa}>{c.empresa || ' '}</div>
+        {/* sempre reserva a linha da empresa para o card ter a MESMA altura com ou sem empresa;
+            o chip de atendimento entra aqui (não na linha de status, já apertada) — o nome da
+            empresa trunca para abrir espaço, a largura do chip é fixa e nunca quebra linha */}
+        <div className="flex items-center gap-2" style={{ minHeight: 20 }}>
+          <span className="t-sm muted truncate" aria-hidden={!c.empresa} style={{ flex: 1, minWidth: 0 }}>{c.empresa || ' '}</span>
+          <span
+            className="chip"
+            aria-hidden={!atendimento}
+            style={{
+              flex: 'none', whiteSpace: 'nowrap', visibility: atendimento ? undefined : 'hidden',
+              background: `color-mix(in srgb, ${atendimento?.cor ?? 'transparent'} 14%, transparent)`,
+              color: atendimento?.cor,
+            }}
+          >
+            <span aria-hidden className="chip-dot" style={{ background: atendimento?.cor }} />
+            {atendimento?.texto ?? 'x'}
+          </span>
+        </div>
+        {/* follow-up (cadência de qualificação) — linha própria, sempre
+            reservada (invisível quando o negócio nunca entrou na
+            cadência), pra não competir por espaço com nome/empresa/
+            atendimento nem repetir o vazamento que a linha de status já
+            teve (achado da Sentinela) */}
+        <div style={{ marginTop: 'var(--s-1)', minHeight: 20 }}>
+          <span
+            className="chip"
+            aria-hidden={!followup}
+            style={{
+              flex: 'none', whiteSpace: 'nowrap', visibility: followup ? undefined : 'hidden',
+              background: 'color-mix(in srgb, var(--series-2) 14%, transparent)', color: 'var(--series-2)',
+            }}
+          >
+            <span aria-hidden className="chip-dot" style={{ background: 'var(--series-2)' }} />
+            FUP {followup?.toque ?? 1}/{followup?.total ?? 3}
+          </span>
+        </div>
       </div>
 
       {/* estrelas + valor — altura fixa para o card não mudar de tamanho quando há/não há valor */}
@@ -120,7 +178,7 @@ const CardVisual = memo(function CardVisual({ c, comLink = true }: { c: CardPipe
           >
             <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><rect x="3.5" y="3.5" width="13" height="13" rx="3" /><path d="M6.5 10l2.5 2.5 4.5-5" /></svg>
             <span className="t-sm truncate flex-1">{c.next_step}</span>
-            {c.next_step_due && <span className="t-xs tabular shrink-0" style={{ opacity: 0.8 }}>{new Date(c.next_step_due).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</span>}
+            {c.next_step_due && <span className="t-xs tabular shrink-0" style={{ opacity: 0.8 }}>{new Date(c.next_step_due).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' })}</span>}
           </div>
         ) : (
           <div
@@ -217,8 +275,27 @@ const Coluna = memo(function Coluna({ estagio, cards }: { estagio: Estagio; card
 export function Kanban({ cards, catalogo = [] }: { cards: CardPipeline[]; catalogo?: { id: number; name: string }[] }) {
   const [filtros, setFiltros] = useState<Filtros>(filtroVazio)
   const [filtroAberto, setFiltroAberto] = useState(false)
+  const [filtrosCarregados, setFiltrosCarregados] = useState(false)
+  const [referenciaData, setReferenciaData] = useState(0)
 
-  const filtrados = useMemo(() => aplicarFiltros(cards, filtros), [cards, filtros])
+  useEffect(() => {
+    setFiltros(filtrosIniciais(window.location.search, window.sessionStorage.getItem(FILTRO_SALVO)))
+    setFiltrosCarregados(true)
+  }, [])
+
+  useEffect(() => {
+    if (!filtrosCarregados) return
+    window.history.replaceState(null, '', persistirFiltros(filtros, window.location.href, window.sessionStorage, FILTRO_SALVO))
+  }, [filtros, filtrosCarregados])
+
+  useEffect(() => {
+    const agora = new Date()
+    const proximaMeiaNoite = proximaReavaliacao(agora)
+    const timeout = window.setTimeout(() => setReferenciaData(Date.now()), proximaMeiaNoite - agora.getTime())
+    return () => window.clearTimeout(timeout)
+  }, [referenciaData])
+
+  const filtrados = useMemo(() => aplicarFiltros(cards, filtros), [cards, filtros, referenciaData])
 
   const board = useEstagiosBoard()
   const ordemIds = useMemo(() => board.map(e => e.id), [board])
@@ -290,11 +367,11 @@ export function Kanban({ cards, catalogo = [] }: { cards: CardPipeline[]; catalo
     const card = ativo
     setAtivo(null)
     arrastando.current = false
-    if (!over || !card) { setCols(agrupar(cards, ordemIds)); return }
+    if (!over || !card) { setCols(recomporColunasAposFalha(cards, filtros, ordemIds)); return }
 
     const activeId = String(active.id)
     const container = acharColuna(activeId)
-    if (!container) { setCols(agrupar(cards, ordemIds)); return }
+    if (!container) { setCols(recomporColunasAposFalha(cards, filtros, ordemIds)); return }
 
     const itens = colsRef.current[container]
     const oldIndex = itens.findIndex(c => c.id === activeId)
@@ -319,7 +396,7 @@ export function Kanban({ cards, catalogo = [] }: { cards: CardPipeline[]; catalo
 
     startTransition(async () => {
       const r = await reordenarCard(activeId, container, rank, estagioMudou)
-      if (!r.ok) { setErro(r.erro); setCols(agrupar(cards, ordemIds)) }
+      if (!r.ok) { setErro(r.erro); setCols(recomporColunasAposFalha(cards, filtros, ordemIds)) }
     })
   }
 
@@ -383,4 +460,3 @@ export function Kanban({ cards, catalogo = [] }: { cards: CardPipeline[]; catalo
     </div>
   )
 }
-

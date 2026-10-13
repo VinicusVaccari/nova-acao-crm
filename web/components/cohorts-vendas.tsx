@@ -2,7 +2,7 @@ import { MESES_PROJECAO, moedaVenda, type CohortVenda } from '@/lib/vendas'
 import { Painel, Tabela, Td } from './ui'
 
 const mesVenda = (mes: string) => new Intl.DateTimeFormat('pt-BR', {
-  month: 'short', year: 'numeric', timeZone: 'UTC',
+  month: 'short', year: 'numeric', timeZone: 'America/Sao_Paulo',
 }).format(new Date(`${mes}-01T12:00:00Z`))
 
 export function CohortsVendas({ cohorts }: { cohorts: CohortVenda[] }) {

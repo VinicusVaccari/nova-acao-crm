@@ -10,16 +10,17 @@ async function negociosAbertos(): Promise<NegocioOpcao[]> {
   const db = await userDatabase()
   const { data } = await db
     .from('opportunities')
-    .select('id, title, stage, people:person_id ( full_name )')
+    .select('id, title, stage, people:person_id ( full_name ), companies:company_id ( trade_name )')
     .is('lost_at', null)
     .order('stage_since', { ascending: false })
     .limit(300)
   return (data ?? [])
     .filter(o => o.stage !== 'ganho' && o.stage !== 'cliente')
-    .map(o => ({
-      id: o.id as string,
-      nome: (o.title as string) || ((o.people as { full_name?: string } | null)?.full_name) || 'Sem nome',
-    }))
+    .map(o => {
+      const lead = ((o.people as { full_name?: string } | null)?.full_name) || (o.title as string) || 'Sem nome'
+      const empresa = (o.companies as { trade_name?: string } | null)?.trade_name
+      return { id: o.id as string, nome: empresa ? `${lead} · ${empresa}` : lead }
+    })
 }
 
 export const dynamic = 'force-dynamic'

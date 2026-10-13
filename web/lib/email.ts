@@ -30,7 +30,7 @@ export async function enviarEmailConvite(
   const iniciais = escapar((convidadoPor || 'Nova Ação').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w.charAt(0).toUpperCase()).join('') || 'NA')
   const acesso = escapar(papelNome || 'Membro')
   const exp = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-  const expFmt = exp.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })
+  const expFmt = exp.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: 'numeric', month: 'long' })
   const linkSemProto = link.replace(/^https?:\/\//, '')
   const linkCurto = linkSemProto.length > 44 ? `${linkSemProto.slice(0, 44)}…` : linkSemProto
 
@@ -169,6 +169,46 @@ export async function enviarEmailConvite(
     if (!res.ok) {
       const txt = await res.text()
       console.error('Resend falhou:', res.status, txt)
+      return { enviado: false, motivo: `resend_${res.status}` }
+    }
+    return { enviado: true }
+  } catch (e) {
+    console.error('Resend erro:', e)
+    return { enviado: false, motivo: 'excecao' }
+  }
+}
+
+export async function enviarEmailRecuperacao(para: string, link: string): Promise<{ enviado: boolean; motivo?: string }> {
+  if (!resendConfigurado()) return { enviado: false, motivo: 'sem_resend' }
+
+  const logo = `${(process.env.SUPABASE_URL || '').replace(/\/$/, '')}/storage/v1/object/public/wa-media/brand/simbolo.png`
+  const href = escapar(link)
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Redefina sua senha — Nova Ação</title></head>
+<body style="margin:0;padding:0;background:#EFEDE8;font-family:Tahoma,Verdana,Arial,sans-serif;color:#202020;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 12px;">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:100%;background:#FDFDFC;border-radius:20px;overflow:hidden;">
+      <tr><td style="background:#009E9B;padding:24px 32px;"><img src="${logo}" width="42" height="42" alt="" style="vertical-align:middle;border:0;"><span style="margin-left:12px;font-size:24px;font-weight:bold;letter-spacing:1px;color:#fff;vertical-align:middle;">nova <span style="color:#FAB800;">ação</span></span></td></tr>
+      <tr><td style="background:#FAB800;height:5px;line-height:5px;font-size:0;">&nbsp;</td></tr>
+      <tr><td style="padding:38px 36px;"><div style="font-size:11px;letter-spacing:3px;color:#009E9B;text-transform:uppercase;">Recuperação de senha</div>
+        <h1 style="margin:10px 0 0;font-size:30px;line-height:36px;">Redefina sua senha.</h1>
+        <p style="font-size:15px;line-height:24px;color:#4A4A48;">Recebemos um pedido para redefinir a senha do seu acesso ao CRM da Nova Ação.</p>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:26px;"><tr><td style="background:#FAB800;border-radius:10px;"><a href="${href}" style="display:block;padding:16px 30px;font-weight:bold;color:#202020;text-decoration:none;">Redefinir minha senha</a></td></tr></table>
+        <p style="font-size:12px;line-height:20px;color:#8A8A86;">Se você não pediu a redefinição, pode ignorar este e-mail.</p>
+      </td></tr>
+      <tr><td style="background:#412257;padding:24px 32px;color:#D6CBE0;font-size:12px;line-height:20px;">Agência Nova Ação · Marketing e Publicidade<br>Rua Frei Gaspar, 22 sala 213 — Centro, São Bernardo do Campo/SP</td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`
+
+  try {
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: remetente(), to: [para], subject: 'Redefina sua senha do CRM Nova Ação', html }),
+    })
+    if (!res.ok) {
+      console.error('Resend falhou:', res.status, await res.text())
       return { enviado: false, motivo: `resend_${res.status}` }
     }
     return { enviado: true }

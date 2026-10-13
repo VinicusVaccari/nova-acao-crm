@@ -51,9 +51,13 @@ export async function carregarConversas(): Promise<Conversa[]> {
     naoLidas: Number(r.nao_lidas ?? 0),
   }))
 
-  // estado da trava (controlada pelo n8n na tabela de cadastro). Só os
-  // travados vêm — é uma minoria, e evita mandar a lista de telefones.
-  const { data: travas } = await db.from('v_trava_atual').select('phone').eq('travado', true)
+  // Consulta só os telefones visíveis. O cadastro tem milhares de travas;
+  // buscar tudo a cada atualização era caro e podia truncar o resultado.
+  const telefones = [...new Set(conversas.map(c => (c.telefone ?? '').replace(/\D/g, '')).filter(Boolean))]
+  if (!telefones.length) return conversas
+  const { data: travas, error: travaErro } = await db.from('v_trava_atual')
+    .select('phone').eq('travado', true).in('phone', telefones)
+  if (travaErro) throw new Error('mensagens: não foi possível consultar o atendimento')
   const travados = new Set((travas ?? []).map(t => t.phone as string))
   for (const c of conversas) {
     if (travados.has((c.telefone ?? '').replace(/\D/g, ''))) c.atendimento = 'humano'

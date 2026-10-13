@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { IconeAgenda, IconeComercial, IconeContatos, IconeEmpresas, IconeHoje, IconeMensagens, IconePipeline } from '@/components/icones'
-import { totalNaoLidas } from '@/lib/actions'
+import { acompanharInbox, lerInbox } from '@/lib/inbox-client'
 
 type Item = {
   href: string
@@ -30,16 +30,10 @@ const GRUPOS: Item[][] = [
    quem manda é o polling de 2s de lá, que zera na hora ao abrir a conversa. */
 function useNaoLidas(inicial: number): number {
   const [n, setN] = useState(inicial)
-  useEffect(() => {
-    let ativo = true
-    const tick = () => {
-      if (document.hidden) return
-      totalNaoLidas().then(t => { if (ativo) setN(t) }).catch(() => { /* próximo tick */ })
-    }
-    const id = setInterval(tick, 20_000)
-    document.addEventListener('visibilitychange', tick)
-    return () => { ativo = false; clearInterval(id); document.removeEventListener('visibilitychange', tick) }
-  }, [])
+  useEffect(() => acompanharInbox(async signal => {
+    const total = await lerInbox('nao-lidas', {}, signal)
+    if (!signal.aborted) setN(total)
+  }, 20_000, false), [])
   return n
 }
 

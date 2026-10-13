@@ -1,6 +1,7 @@
 import { integrationAuthorized, readBoundedJson, integrationRateLimit } from '@/lib/security/integration'
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { buscarIdentidadeTelefone, nomeUtilizavel } from '@/lib/whatsapp'
 
 /* -----------------------------------------------------------------
    API da Naia para LER e ESCREVER no CRM em tempo real.
@@ -9,7 +10,7 @@ import { db } from '@/lib/db'
         → snapshot do deal (contato, empresa, campos, etapa, notas)
 
    POST /api/naia/deal?secret=…
-        body: { opportunityId | phone, contato, empresa, qualificacao,
+        body: { opportunityId | phone, contato, empresa, qualificacao | estrelas,
                 camposContato, camposEmpresa, etapa, motivoPerda, nota }
         → aplica o patch (upsert por campo). Idempotente.
 
@@ -23,16 +24,102 @@ function autorizado(req: Request): boolean {
   return integrationAuthorized(req, process.env.NAIA_API_SECRET)
 }
 
+function lerQualificacao(valor: unknown): number | null {
+  if (typeof valor === 'number') return Number.isFinite(valor) ? valor : null
+  if (typeof valor !== 'string') return null
+  const texto = valor.trim()
+  if (!/^\d+(?:[.,]\d+)?$/.test(texto)) return null
+  const numero = Number(texto.replace(',', '.'))
+  return Number.isFinite(numero) ? numero : null
+}
+
+type Encerramento = Record<string, unknown>
+
+function textoEncerramento(valor: unknown): string | null {
+  if (typeof valor !== 'string' && typeof valor !== 'number') return null
+  const texto = String(valor).trim()
+  return texto && texto.toLowerCase() !== 'null' ? texto : null
+}
+
+function lerEncerramento(valor: unknown): Encerramento | null {
+  if (valor && typeof valor === 'object' && !Array.isArray(valor)) return valor as Encerramento
+  if (typeof valor !== 'string') return null
+  try {
+    const json: unknown = JSON.parse(valor)
+    return json && typeof json === 'object' && !Array.isArray(json) ? json as Encerramento : null
+  } catch { return null }
+}
+
+function rotuloEncerramento(encerramento: Encerramento): string | null {
+  const tipo = encerramento.tipo
+  if (tipo === 'agendado') return 'LEAD AGENDADO'
+  if (tipo === 'encaminhado_humano') return ({
+    parceria: 'LEAD PEDIU PARCERIA', recusou_reuniao: 'LEAD RECUSOU REUNIÃO', reprovado_qualificacao: 'LEAD REPROVADO NA QUALIFICAÇÃO',
+    falha_qualificacao: 'TOOL QUALIFICAÇÃO FALHOU', falha_agenda: 'TOOL AGENDA FALHOU',
+  } as Record<string, string>)[String(encerramento.motivo_encaminhamento)] ?? 'LEAD PEDIU HUMANO'
+  if (tipo === 'descarte') return ({
+    sem_operacao_ativa: 'LEAD SEM OPERAÇÃO', servico_indisponivel: 'SERVIÇO INDISPONÍVEL', nao_e_lead: 'NÃO É LEAD',
+    lead_evasivo: 'LEAD EVASIVO', conteudo_ofensivo: 'CONTEÚDO OFENSIVO',
+  } as Record<string, string>)[String(encerramento.motivo_descarte)] ?? `DESCARTE: ${textoEncerramento(encerramento.motivo_descarte) ?? 'sem motivo'}`
+  return 'ENCERRAMENTO NÃO RECONHECIDO'
+}
+
+function notaEncerramento(encerramento: Encerramento, rotulo: string): string {
+  const linhas = [`Encerramento da Naia — ${rotulo}`]
+  linhas.push('', textoEncerramento(encerramento.informacoes_adicionais) ?? 'Sem resumo da Naia.')
+  return linhas.join('\n').slice(0, 8_000)
+}
+
+function emailValido(email: string | null): email is string {
+  return !!email && email.length <= 320 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+}
+
+type PessoaContato = { full_name?: string | null; email_primary?: string | null } | null
+
+async function preencherNomeContato(personId: string, pessoa: PessoaContato, bruto: unknown) {
+  const nome = nomeUtilizavel(bruto)
+  if (!nome || nomeUtilizavel(pessoa?.full_name)) return { aplicado: false, erro: null }
+  const { error } = await db.from('people').update({ full_name: nome }).eq('id', personId)
+  return error ? { aplicado: false, erro: error.message } : { aplicado: true, erro: null }
+}
+
+async function atualizarEmailContato(personId: string, pessoa: PessoaContato, bruto: unknown) {
+  const email = textoEncerramento(bruto)
+  if (!emailValido(email)) return { aplicado: false, erro: null }
+  const { data: emailCanonico, error: normalizarErro } = await db.rpc('fn_norm_email', { p_raw: email })
+  const { data: atualCanonico, error: normalizarAtualErro } = await db.rpc('fn_norm_email', { p_raw: pessoa?.email_primary ?? null })
+  if (normalizarErro || normalizarAtualErro || !emailCanonico) {
+    return { aplicado: false, erro: normalizarErro?.message ?? normalizarAtualErro?.message ?? 'e-mail inválido' }
+  }
+  if (emailCanonico === atualCanonico) return { aplicado: false, erro: null }
+
+  const { data: identidade, error: identidadeErro } = await db.from('identities').select('person_id')
+    .eq('kind', 'email').eq('value', emailCanonico).maybeSingle()
+  if (identidadeErro) return { aplicado: false, erro: identidadeErro.message }
+  if (identidade?.person_id && identidade.person_id !== personId) return { aplicado: false, erro: 'e-mail já pertence a outro contato' }
+
+  const { error: identidadeGravarErro } = await db.from('identities')
+    .upsert({ person_id: personId, kind: 'email', value: emailCanonico }, { onConflict: 'kind,value', ignoreDuplicates: true })
+  if (identidadeGravarErro) return { aplicado: false, erro: identidadeGravarErro.message }
+
+  const { data: confirmada, error: confirmarErro } = await db.from('identities').select('person_id')
+    .eq('kind', 'email').eq('value', emailCanonico).maybeSingle()
+  if (confirmarErro) return { aplicado: false, erro: confirmarErro.message }
+  if (confirmada?.person_id !== personId) return { aplicado: false, erro: 'e-mail já pertence a outro contato' }
+
+  const { error } = await db.from('people').update({ email_primary: emailCanonico }).eq('id', personId)
+  return error ? { aplicado: false, erro: error.message } : { aplicado: true, erro: null }
+}
+
 /** Resolve a oportunidade por id ou por telefone (cria o lead se preciso). */
-async function resolverOpp(opportunityId?: string, phone?: string, criar = true): Promise<string | null> {
+async function resolverOpp(opportunityId?: string, phone?: string, criar = true): Promise<string | { blocked: true } | null> {
   if (opportunityId) return opportunityId
   if (!phone) return null
   const digits = phone.replace(/\D/g, '')
   if (!digits) return null
   const tel = '+' + digits
 
-  const { data: ident } = await db.from('identities').select('person_id')
-    .in('kind', ['phone', 'wa_id']).in('value', [tel, digits]).limit(1).maybeSingle()
+  const { identidade: ident } = await buscarIdentidadeTelefone(db, digits)
 
   if (ident?.person_id) {
     const { data: opp } = await db.from('opportunities').select('id')
@@ -44,6 +131,7 @@ async function resolverOpp(opportunityId?: string, phone?: string, criar = true)
   const { data } = await db.rpc('fn_ingest_lead', {
     p_payload: { phone: tel, wa_id: digits, channel: 'whatsapp' },
   })
+  if (data?.blocked === 'whatsapp_travado') return { blocked: true }
   return (data as { opportunity_id?: string } | null)?.opportunity_id ?? null
 }
 
@@ -70,6 +158,7 @@ export async function GET(req: Request) {
   if (limited) return limited
   const url = new URL(req.url)
   const oppId = await resolverOpp(url.searchParams.get('opportunityId') ?? undefined, url.searchParams.get('phone') ?? undefined, false)
+  if (oppId && typeof oppId !== 'string') return NextResponse.json({ ok: true, ignored: 'contato-travado', travado: true })
   if (!oppId) return NextResponse.json({ erro: 'oportunidade não encontrada' }, { status: 404 })
 
   const { data: opp } = await db.from('opportunities')
@@ -114,23 +203,56 @@ export async function POST(req: Request) {
   try { body = await readBoundedJson(req) } catch { return NextResponse.json({ erro: 'json inválido' }, { status: 400 }) }
 
   const oppId = await resolverOpp(body.opportunityId as string | undefined, body.phone as string | undefined, true)
+  if (oppId && typeof oppId !== 'string') return NextResponse.json({ ok: true, ignored: 'contato-travado', travado: true })
   if (!oppId) return NextResponse.json({ erro: 'informe opportunityId ou phone' }, { status: 400 })
 
-  const { data: opp } = await db.from('opportunities').select('id, person_id, company_id').eq('id', oppId).maybeSingle()
+  const { data: opp } = await db.from('opportunities').select('id, person_id, company_id, people:person_id(full_name,email_primary)').eq('id', oppId).maybeSingle()
   if (!opp) return NextResponse.json({ erro: 'oportunidade não encontrada' }, { status: 404 })
   const personId = opp.person_id as string
   let companyId = (opp.company_id as string) ?? null
   const applied: string[] = []
+  let erroQualificacao: string | null = null
+  let erroNota: string | null = null
+  let erroNome: string | null = null
+  let erroEmail: string | null = null
+  let erroEncerramento: string | null = null
+
+  const pessoa = opp.people as PessoaContato
+  const contato = body.contato as Record<string, unknown> | undefined
 
   // ---- contato (people) ----
-  const contato = body.contato as Record<string, string> | undefined
-  if (contato) {
-    const patch: Record<string, unknown> = {}
-    if (contato.full_name) patch.full_name = contato.full_name
-    if (contato.email) patch.email_primary = contato.email
-    if (contato.phone) patch.phone_primary = contato.phone
-    if (Object.keys(patch).length) { await db.from('people').update(patch).eq('id', personId); applied.push('contato') }
+  if (contato?.phone) {
+    await db.from('people').update({ phone_primary: contato.phone }).eq('id', personId)
+    applied.push('contato')
   }
+
+  // ---- veredito da Naia: resumo idempotente, bastão e dados que ela coletou ----
+  const encerramento = lerEncerramento(body.encerramento)
+  if (typeof body.encerramento === 'string' && !encerramento) erroEncerramento = 'encerramento JSON inválido'
+  const rotulo = encerramento ? rotuloEncerramento(encerramento) : null
+  if (encerramento && rotulo) {
+    const textoNota = notaEncerramento(encerramento, rotulo)
+    const { data: existente, error: buscaNotaErro } = await db.from('notes').select('id')
+      .eq('opportunity_id', oppId).eq('body', textoNota).limit(1).maybeSingle()
+    if (buscaNotaErro) erroNota = buscaNotaErro.message
+    else if (!existente?.id) {
+      const { error } = await db.from('notes').insert({ opportunity_id: oppId, body: textoNota, author_id: null })
+      if (error) erroNota = error.message
+      else applied.push('nota:encerramento')
+    }
+
+  }
+
+  const dados = encerramento?.dados as Record<string, unknown> | null
+  const nomeBruto = textoEncerramento(contato?.full_name) ?? dados?.nome
+  const nome = await preencherNomeContato(personId, pessoa, nomeBruto)
+  if (nome.erro) erroNome = nome.erro
+  else if (nome.aplicado) applied.push('contato:nome')
+
+  const emailBruto = textoEncerramento(contato?.email) ?? dados?.email
+  const email = await atualizarEmailContato(personId, pessoa, emailBruto)
+  if (email.erro) erroEmail = email.erro
+  else if (email.aplicado) applied.push('contato:email')
 
   // ---- empresa (companies) — cria e vincula se não existir ----
   const empresa = body.empresa as Record<string, unknown> | undefined
@@ -147,10 +269,14 @@ export async function POST(req: Request) {
     }
   }
 
-  // ---- qualificação (0-5) ----
-  if (body.qualificacao != null) {
-    const q = Math.max(0, Math.min(5, Math.round(Number(body.qualificacao))))
-    if (Number.isFinite(q)) { await db.from('opportunities').update({ qualificacao: q }).eq('id', oppId); applied.push('qualificacao') }
+  // ---- qualificação (0-5); primeiro valor válido: qualificacao, depois estrelas ----
+  const qualificacaoNumero = [body.qualificacao, body.estrelas]
+    .map(lerQualificacao).find((valor): valor is number => valor !== null)
+  if (qualificacaoNumero !== undefined) {
+    const q = Math.max(0, Math.min(5, Math.round(qualificacaoNumero)))
+    const { error } = await db.from('opportunities').update({ qualificacao: q }).eq('id', oppId)
+    if (error) erroQualificacao = error.message
+    else applied.push('qualificacao')
   }
 
   // ---- campos personalizados (upsert por entidade) ----
@@ -202,14 +328,24 @@ export async function POST(req: Request) {
   }
 
   // ---- mover etapa (por último; pode fechar o deal) ----
+  let erroEtapa: string | null = null
   if (typeof body.etapa === 'string' && body.etapa) {
     const { error } = await db.rpc('fn_move_stage', {
       p_opportunity_id: oppId, p_to_stage: body.etapa, p_actor: null,
       p_actor_type: 'ai', p_reason: (body.motivoPerda as string) ?? null, p_meta: { via: 'naia' },
     })
-    if (error) return NextResponse.json({ ok: false, opportunityId: oppId, applied, erro_etapa: error.message }, { status: 200 })
-    applied.push(`etapa:${body.etapa}`)
+    if (error) erroEtapa = error.message
+    else applied.push(`etapa:${body.etapa}`)
   }
 
+  if (erroQualificacao || erroEtapa || erroNota || erroNome || erroEmail || erroEncerramento) return NextResponse.json({
+    ok: false, opportunityId: oppId, applied,
+    ...(erroQualificacao ? { erro_qualificacao: erroQualificacao } : {}),
+    ...(erroEtapa ? { erro_etapa: erroEtapa } : {}),
+    ...(erroNota ? { erro_nota: erroNota } : {}),
+    ...(erroNome ? { erro_nome: erroNome } : {}),
+    ...(erroEmail ? { erro_email: erroEmail } : {}),
+    ...(erroEncerramento ? { erro_encerramento: erroEncerramento } : {}),
+  }, { status: 200 })
   return NextResponse.json({ ok: true, opportunityId: oppId, applied })
 }

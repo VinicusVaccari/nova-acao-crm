@@ -80,6 +80,9 @@ export async function atualizarUsuario(
   let actor
   try { actor = await requireAdmin() } catch (e) { return { ok: false, erro: (e as Error).message } }
   if (actor.id === id && (campos.is_active === false || (campos.role !== undefined && campos.role !== 'admin'))) return { ok: false, erro: 'Não é permitido remover seu próprio acesso administrativo.' }
+  const { data: alvo, error: alvoError } = await db.from('profiles').select('role').eq('id', id).maybeSingle()
+  if (alvoError || !alvo) return { ok: false, erro: alvoError?.message ?? 'Usuário não encontrado.' }
+  if (alvo.role === 'ia') return { ok: false, erro: 'O perfil da Naia é controlado pelo sistema.' }
 
   const patch: Record<string, unknown> = {}
   if (campos.role !== undefined) {

@@ -2,7 +2,7 @@ import { requireActiveUser } from '@/lib/security/authorization'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { db } from '@/lib/db'
-import { carregarFicha } from '@/lib/crm'
+import { carregarFicha, rotuloLead } from '@/lib/crm'
 import { Avatar, Selo } from '@/components/ui'
 import { carregarEstagios } from '@/lib/estagios-server'
 import { StageStepper } from '@/components/stage-stepper'
@@ -19,7 +19,7 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
   const [ficha, motivos, usuariosRes, estagios, segRes] = await Promise.all([
     carregarFicha(id),
     db.from('lost_reasons').select('code,label').eq('active', true),
-    db.from('profiles').select('id, full_name').eq('is_active', true).order('full_name'),
+    db.from('profiles').select('id, full_name').eq('is_active', true).neq('role', 'ia').order('full_name'),
     carregarEstagios(),
     db.from('segments').select('name').eq('active', true).order('name'),
   ])
@@ -30,10 +30,15 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
   const corEstagio = (s: string) => mapaEstagio[s]?.cor ?? '#7c7595'
   const usuarios = (usuariosRes.data ?? []) as { id: string; full_name: string }[]
 
-  const { opp, atividades, atividadesTruncadas, reunioes, propostas, historico, toques, toqueAtribuido: toqueDireto, objecoes, notas, tarefas, produtos, catalogo, arquivos } = ficha
-  const pessoa = opp.people as Record<string, string>
-  const empresa = opp.companies as Record<string, string> | null
-  const dono = opp.profiles as Record<string, string> | null
+  const { opp, atividades, atividadesTruncadas, reunioes, propostas, historico, toques, toqueAtribuido: toqueDireto, objecoes, notas, tarefas, produtos, catalogo, arquivos, followups } = ficha
+  const pessoa = (opp.people as Record<string, string | null> | null) ?? {}
+  const empresa = opp.companies as Record<string, string | null> | null
+  const dono = opp.profiles as Record<string, string | null> | null
+  const nomePessoa = rotuloLead(pessoa.full_name, pessoa.phone_primary)
+  const texto = (valor: unknown) => typeof valor === 'string' && valor.trim() ? valor.trim() : null
+  const tituloNegociacao = texto(opp.title) ?? nomePessoa
+  const nomeEmpresa = texto(empresa?.trade_name)
+  const responsavel = texto(dono?.full_name) ?? 'Naia (IA)'
 
   // campos personalizados (Contato/Empresa) — Empresa só se houver empresa
   const [contatoCampos, empresaCampos] = await Promise.all([
@@ -54,6 +59,8 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
     ?? toques.find(t => String(t.id) === String(opp.first_touchpoint_id))
     ?? toques.at(-1)
   ) as Record<string, string> | undefined
+  const temCliqueGoogle = toques.some(toque => Boolean(toque.gclid || toque.gbraid || toque.wbraid))
+  const temCliqueMeta = toques.some(toque => Boolean(toque.fbclid || toque.fbc))
 
   const stage = opp.stage as string
   const statusNeg = opp.lost_at ? 'perdido' : opp.paused_at ? 'pausado' : stage === 'ganho' ? 'vendido' : 'andamento'
@@ -76,15 +83,15 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
       <div className="hero" style={{ marginTop: 'var(--s-2)', marginBottom: 'var(--s-4)', padding: 'var(--s-6)' }}>
         <div className="flex flex-wrap items-start justify-between" style={{ gap: 'var(--s-5)' }}>
           <div className="flex items-start" style={{ gap: 'var(--s-4)', minWidth: 0 }}>
-            <Avatar nome={pessoa.full_name} tamanho={56} cor={cor} />
+            <Avatar nome={nomePessoa} tamanho={56} cor={cor} />
             <div style={{ minWidth: 0 }}>
-              <h1 className="t-h1 hero-ink">{pessoa.full_name}</h1>
+              <h1 className="t-h1 hero-ink">{nomePessoa}</h1>
               <div className="flex flex-wrap items-center" style={{ gap: 'var(--s-2)', marginTop: 'var(--s-2)' }}>
                 <span className="chip-stage" style={{ ['--sc' as string]: cor, color: '#fff', background: 'color-mix(in srgb, #fff 16%, transparent)', borderColor: 'transparent' }}>
                   <span aria-hidden className="chip-dot" style={{ background: cor === '#fdb92e' ? cor : '#fff' }} />
                   {labelEstagio(stage)}
                 </span>
-                {empresa?.trade_name && <span className="t-sm hero-ink-2">{empresa.trade_name}</span>}
+                {nomeEmpresa && <span className="t-sm hero-ink-2">{nomeEmpresa}</span>}
                 {empresa?.segment && <span className="t-sm hero-ink-2">· {empresa.segment}</span>}
               </div>
               <div className="flex flex-wrap" style={{ gap: 'var(--s-4)', marginTop: 'var(--s-3)' }}>
@@ -114,7 +121,7 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
             oppId={id}
             neg={{
               title: (opp.title as string) ?? null,
-              nomePessoa: pessoa.full_name,
+              nomePessoa,
               qualificacao: Number(opp.qualificacao ?? 0),
               source: toqueAtribuido?.utm_source || (opp.source as string) || null,
               campaign: toqueAtribuido?.utm_campaign || (opp.campaign as string) || null,
@@ -123,7 +130,7 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
               valorMrr,
               setup: setupProdutos,
               term: Number(opp.term_months ?? 12),
-              responsavel: dono?.full_name ?? 'sem dono',
+              responsavel,
               criadaEm: opp.created_at as string,
               speedMin: speed,
               produtos: produtos.length,
@@ -133,7 +140,7 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
           <PainelContato
             oppId={id}
             personId={opp.person_id as string}
-            contato={{ full_name: pessoa.full_name, phone: pessoa.phone_primary ?? null, email: pessoa.email_primary ?? null }}
+            contato={{ full_name: nomePessoa, phone: pessoa.phone_primary ?? null, email: pessoa.email_primary ?? null }}
             campos={contatoCampos}
           />
 
@@ -144,7 +151,7 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
               empresa
                 ? {
                     id: empresa.id as unknown as string,
-                    trade_name: empresa.trade_name,
+                    trade_name: nomeEmpresa ?? 'Sem nome',
                     cnpj: (empresa.cnpj as string) ?? null,
                     address: (empresa.address as string) ?? null,
                     website: (empresa.website as string) ?? null,
@@ -178,8 +185,9 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
                 </div>
                 <p className="t-xs muted" style={{ marginTop: 'var(--s-3)' }}>
                   {toques.length} toque(s) no contato · origem mais recente deste negócio classificada como <b style={{ color: 'var(--ink-2)' }}>{toqueAtribuido.channel ?? '—'}</b>.
-                  {toqueAtribuido.fbclid && ' Clique do Meta identificado.'}
-                  {toqueAtribuido.gclid && ' Clique do Google identificado.'}
+                  {temCliqueGoogle && ' Clique do Google identificado neste contato.'}
+                  {temCliqueMeta && ' Clique do Meta identificado neste contato.'}
+                  {!temCliqueGoogle && !temCliqueMeta && ' Não há clique identificado neste contato: nenhum toque trouxe gclid, gbraid, wbraid, fbclid ou fbc.'}
                 </p>
               </>
             ) : (
@@ -212,10 +220,10 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
         <FichaTabs
           oppId={id}
           criadoEm={opp.created_at as string}
-          donoNome={dono?.full_name ?? undefined}
+          donoNome={texto(dono?.full_name) ?? undefined}
           donoId={(opp.owner_id as string) ?? undefined}
-          negNome={(opp.title as string) || pessoa.full_name}
-          empresaNome={empresa?.trade_name ?? undefined}
+          negNome={tituloNegociacao}
+          empresaNome={nomeEmpresa ?? undefined}
           usuarios={usuarios}
           atividades={atividades}
           atividadesTruncadas={atividadesTruncadas}
@@ -227,6 +235,7 @@ export default async function Ficha({ params }: { params: Promise<{ id: string }
           produtos={produtos}
           catalogo={catalogo}
           arquivos={arquivos}
+          followups={followups}
         />
       </div>
     </>

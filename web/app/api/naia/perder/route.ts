@@ -2,6 +2,7 @@ import { integrationAuthorized, readBoundedJson, integrationRateLimit } from '@/
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { registrarPerdaAutorizada } from '@/lib/negociacao-service'
+import { buscarIdentidadeTelefone } from '@/lib/whatsapp'
 
 /* -----------------------------------------------------------------
    Marca um deal como PERDIDO (modelo de status: grava lost_at + lost_reason,
@@ -27,9 +28,7 @@ async function acharOpp(opportunityId?: string, phone?: string): Promise<string 
   if (!phone) return null
   const digits = phone.replace(/\D/g, '')
   if (!digits) return null
-  const tel = '+' + digits
-  const { data: ident } = await db.from('identities').select('person_id')
-    .in('kind', ['phone', 'wa_id']).in('value', [tel, digits]).limit(1).maybeSingle()
+  const { identidade: ident } = await buscarIdentidadeTelefone(db, digits)
   if (!ident?.person_id) return null
   const { data: opp } = await db.from('opportunities').select('id')
     .eq('person_id', ident.person_id).is('lost_at', null).neq('stage', 'ganho')

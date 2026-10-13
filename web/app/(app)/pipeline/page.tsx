@@ -1,4 +1,6 @@
 import { userDatabase } from '@/lib/security/user-db'
+import { requireActiveUser } from '@/lib/security/authorization'
+import { naiaAtivaId } from '@/lib/security/naia'
 import Link from 'next/link'
 import { carregarPipeline } from '@/lib/crm'
 import { Kanban } from '@/components/kanban'
@@ -8,10 +10,12 @@ import { brlCurto, num } from '@/lib/format'
 export const dynamic = 'force-dynamic'
 
 export default async function Pipeline() {
+  const user = await requireActiveUser()
   const db = await userDatabase()
-  const [cards, cat] = await Promise.all([
+  const [cards, cat, naiaId] = await Promise.all([
     carregarPipeline(),
     db.from('products').select('id, name').eq('active', true).order('sort_order'),
+    naiaAtivaId(),
   ])
   const catalogo = (cat.data ?? []) as { id: number; name: string }[]
 
@@ -46,7 +50,7 @@ export default async function Pipeline() {
         </div>
         <div className="flex items-center gap-2">
           <Link href="/pipeline/etapas" className="btn btn-ghost btn-sm">Editar etapas</Link>
-          <NovoLead />
+          <NovoLead naiaId={naiaId} userId={user.id} userName={user.nome} />
         </div>
       </div>
 

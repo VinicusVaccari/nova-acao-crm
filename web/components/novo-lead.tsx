@@ -5,7 +5,7 @@ import { criarLead } from '@/lib/actions'
 
 /** Entrada manual de lead (indicação, outbound). Passa pela mesma
  *  fn_ingest_lead do formulário — uma porta de entrada só. */
-export function NovoLead() {
+export function NovoLead({ naiaId, userId, userName }: { naiaId: string | null; userId: string; userName: string }) {
   const [aberto, setAberto] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const [pendente, startTransition] = useTransition()
@@ -20,6 +20,7 @@ export function NovoLead() {
       expected_value: fd.get('expected_value') || null,
       channel: fd.get('channel'),
       utm_source: fd.get('channel'),
+      ...(naiaId ? { owner_id: fd.get('owner_id') } : {}),
     }
     setErro(null)
     startTransition(async () => {
@@ -68,6 +69,16 @@ export function NovoLead() {
           </div>
 
           <Campo nome="product" rotulo="Produto" placeholder="Gestão de Tráfego" />
+
+          {naiaId && (
+            <label className="flex flex-col gap-1">
+              <span className="t-sm" style={{ color: 'var(--ink-2)' }}>Responsável</span>
+              <select name="owner_id" className="field" defaultValue={naiaId}>
+                <option value={naiaId}>Naia (IA)</option>
+                <option value={userId}>{userName}</option>
+              </select>
+            </label>
+          )}
         </div>
 
         {erro && <p className="mt-3 t-sm" style={{ color: 'var(--critical)' }}>{erro}</p>}
