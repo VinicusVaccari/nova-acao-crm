@@ -28,6 +28,7 @@ type Lembrete = {
       person_id: string
       lost_at: string | null
       paused_at: string | null
+      atendimento?: string | null
       people: { full_name: string | null } | null
       companies: { trade_name: string | null } | null
     } | null
@@ -121,7 +122,7 @@ async function processarLembrete(lembreteId: string, limiteEnvioEm: number) {
       meetings!inner (
         id, scheduled_at, status, meeting_url, opportunity_id,
         opportunities!inner (
-          lost_at, paused_at, person_id,
+          lost_at, paused_at, person_id, atendimento,
           people!inner ( full_name ),
           companies ( trade_name )
         )
@@ -145,6 +146,13 @@ async function processarLembrete(lembreteId: string, limiteEnvioEm: number) {
   }
   const reuniao = lembrete.meetings
   const negocio = reuniao?.opportunities
+  // Negócio de LP nova: a LUNA não entra (call de 19/10/2026). Terminal e sem
+  // aviso ao grupo, no mesmo padrão do modo sombra: "enviado" com o motivo
+  // dizendo que nada saiu.
+  if (negocio?.atendimento === 'humano') {
+    await marcar(lembreteId, 'enviado', 'atendimento_humano: negócio de LP nova; LUNA não envia, nada saiu')
+    return
+  }
   if (!reuniao || !negocio || !['agendada', 'confirmada'].includes(reuniao.status) ||
     new Date(reuniao.scheduled_at) <= new Date() || negocio.lost_at || negocio.paused_at) {
     await terminarComAlerta('falhou', 'reunião ou negócio deixou de ser elegível antes do envio')

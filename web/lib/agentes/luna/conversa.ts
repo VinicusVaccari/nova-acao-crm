@@ -13,7 +13,7 @@ import { avisarGrupoLuna } from './avisos'
 
 type Intencao = 'confirma' | 'remarcar' | 'cancelar' | 'duvida' | 'outro'
 type Oferta = { id: number; slots: SlotLuna[]; rodada: number; validade: string; usada_em: string | null; criada_em?: string }
-type Reuniao = { id: string; opportunity_id: string; scheduled_at: string; status: string; external_event_id: string | null; meeting_url: string | null; luna_passou_para_humano_em?: string | null; limiteEnvioEm?: number; orcamento?: OrcamentoLuna; opportunities?: { person_id?: string; lost_at: string | null; paused_at: string | null; people?: { full_name: string | null } | null; companies?: { trade_name: string | null } | null } | null }
+type Reuniao = { id: string; opportunity_id: string; scheduled_at: string; status: string; external_event_id: string | null; meeting_url: string | null; luna_passou_para_humano_em?: string | null; limiteEnvioEm?: number; orcamento?: OrcamentoLuna; opportunities?: { person_id?: string; lost_at: string | null; paused_at: string | null; atendimento?: string | null; people?: { full_name: string | null } | null; companies?: { trade_name: string | null } | null } | null }
 type LembreteEnviado = { status: string; enviado_em: string | null; motivo: string | null }
 type MensagemNossa = { is_automated: boolean | null; occurred_at: string }
 
@@ -566,10 +566,11 @@ export async function responderLeadLuna(entrada: {
     const { data: teste, error } = await db.rpc('fn_numero_teste', { p_phone: entrada.telefone })
     if (error || !teste) return { assumiu: false, respondeu: false }
   }
-  const { data: bruto, error: reuniaoErro } = await db.from('meetings').select('id, opportunity_id, scheduled_at, status, external_event_id, meeting_url, luna_passou_para_humano_em, opportunities!inner(person_id, lost_at, paused_at, people(full_name), companies(trade_name))')
+  const { data: bruto, error: reuniaoErro } = await db.from('meetings').select('id, opportunity_id, scheduled_at, status, external_event_id, meeting_url, luna_passou_para_humano_em, opportunities!inner(person_id, lost_at, paused_at, atendimento, people(full_name), companies(trade_name))')
     .eq('opportunity_id', entrada.opportunityId).in('status', ['agendada', 'confirmada']).gt('scheduled_at', new Date().toISOString()).order('scheduled_at').limit(1).maybeSingle()
   const reuniao = bruto as unknown as Reuniao | null
-  if (reuniaoErro || !reuniao || reuniao.opportunities?.lost_at || reuniao.opportunities?.paused_at) return { assumiu: false, respondeu: false }
+  // atendimento 'humano' = negócio de LP nova: a LUNA não entra (call de 19/10/2026).
+  if (reuniaoErro || !reuniao || reuniao.opportunities?.lost_at || reuniao.opportunities?.paused_at || reuniao.opportunities?.atendimento === 'humano') return { assumiu: false, respondeu: false }
   reuniao.orcamento = orcamento
   reuniao.limiteEnvioEm = orcamento.limiteEm - 2000
   let activityIdsTrataveis: number[] = []

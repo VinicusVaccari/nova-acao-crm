@@ -253,6 +253,17 @@ export async function POST(req: Request) {
   // log em vez de deixar o provedor reenviar o mesmo webhook.
   after(async () => {
     try {
+      // Negócio de LP nova (atendimento='humano'): a mensagem já está no
+      // inbox para o Rodrigues; nenhum agente responde. Falha de leitura
+      // também segura os agentes — na dúvida, ninguém entra.
+      const { data: negocio, error: atendimentoErro } = await db.from('opportunities')
+        .select('atendimento').eq('id', oppId).maybeSingle()
+      if (atendimentoErro || !negocio) {
+        console.error('inbound: atendimento do negócio indisponível; agentes não acionados')
+        return
+      }
+      if (negocio.atendimento === 'humano') return
+
       const luna = texto.trim() === '#reset'
         ? { assumiu: false, respondeu: false }
         : await responderLeadLuna({
