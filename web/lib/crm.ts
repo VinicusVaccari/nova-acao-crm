@@ -24,7 +24,7 @@ export async function carregarPipeline(): Promise<CardPipeline[]> {
     .select(`
       id, stage, stage_since, board_rank, expected_value, term_months, setup_value, score,
       qualificacao, title, product, source_channel, next_step, next_step_due,
-      created_at, first_contact_at, lost_reason, lost_at, paused_at,
+      created_at, first_contact_at, lost_reason, lost_at, paused_at, atendimento,
       people:person_id ( full_name, phone_primary ),
       companies:company_id ( trade_name ),
       profiles:owner_id ( full_name )
@@ -68,8 +68,9 @@ export async function carregarPipeline(): Promise<CardPipeline[]> {
     profiles?: { full_name?: string | null } | null
   }
 
-  /* Indicador de atendimento — MESMA fonte que a tela de Mensagens usa (a
-     trava, não a coluna opportunities.atendimento, que está órfã). Busca
+  /* Indicador de atendimento — MESMA fonte que a tela de Mensagens usa: a
+     trava do telefone e, desde 19/10/2026, opportunities.atendimento =
+     'humano' (negócio de LP nova, que já nasce com o Rodrigues). Busca
      SEMPRE por lote pequeno e por chave exata (telefone / opportunity_id),
      nunca por .in() com a lista inteira nem por "carregar tudo com um
      limite": o primeiro estoura a URL em carteira grande (mesmo modo de
@@ -145,11 +146,15 @@ export async function carregarPipeline(): Promise<CardPipeline[]> {
     const status = o.lost_at ? 'perdido' : o.paused_at ? 'pausado' : stage === 'ganho' ? 'vendido' : 'andamento'
     const prod = porProduto.get(o.id as string) ?? { ids: [], nomes: [] }
     const digits = (r.people?.phone_primary ?? '').replace(/\D/g, '')
-    const atendimento: CardPipeline['atendimento'] = !digits
-      ? null
-      : !travados.has(digits)
-        ? 'naia'
-        : humanoRespondeuPorOpp.get(o.id as string) ? 'voce' : 'travado'
+    // Negócio de LP nova já nasce com o Rodrigues: é dele mesmo sem trava,
+    // sem telefone e antes de qualquer resposta.
+    const atendimento: CardPipeline['atendimento'] = o.atendimento === 'humano'
+      ? 'voce'
+      : !digits
+        ? null
+        : !travados.has(digits)
+          ? 'naia'
+          : humanoRespondeuPorOpp.get(o.id as string) ? 'voce' : 'travado'
     return {
       ...(o as unknown as CardPipeline),
       status,

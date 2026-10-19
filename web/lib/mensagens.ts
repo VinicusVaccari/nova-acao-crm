@@ -25,6 +25,7 @@ export type Conversa = {
   ultima: string
   atendimento: 'naia' | 'humano'   // trava: 'humano' = travado, Naia não responde
   humanoRespondeu: boolean          // o time já respondeu por aqui?
+  responsavelHumano: boolean        // negócio de LP nova: já nasce com o Rodrigues
   naoLidas: number                  // mensagens do lead desde a última leitura do time
 }
 
@@ -46,10 +47,27 @@ export async function carregarConversas(): Promise<Conversa[]> {
     telefone: (r.telefone as string) ?? null,
     ultimaAt: r.ultima_at as string,
     ultima: (r.ultima as string) ?? '',
-    atendimento: 'naia', // ajustado abaixo pela trava (v_trava_atual)
+    atendimento: 'naia', // ajustado abaixo pela trava (v_trava_atual) e pelo negócio
     humanoRespondeu: !!r.humano_respondeu,
+    responsavelHumano: false,
     naoLidas: Number(r.nao_lidas ?? 0),
   }))
+
+  // Negócio de LP nova (opportunities.atendimento = 'humano'): nenhum agente
+  // entra e o Rodrigues já é o dono, com ou sem trava no telefone. Em lotes
+  // pequenos, pelo mesmo motivo do pipeline: .in() com centenas de UUIDs
+  // estoura a URL.
+  const ids = conversas.map(c => c.oppId)
+  const humanos = new Set<string>()
+  for (let i = 0; i < ids.length; i += 150) {
+    const { data: negocios, error: negocioErro } = await userDb.from('opportunities')
+      .select('id').eq('atendimento', 'humano').in('id', ids.slice(i, i + 150))
+    if (negocioErro) throw new Error('mensagens: não foi possível consultar o atendimento')
+    for (const n of negocios ?? []) humanos.add(n.id as string)
+  }
+  for (const c of conversas) {
+    if (humanos.has(c.oppId)) { c.atendimento = 'humano'; c.responsavelHumano = true }
+  }
 
   // Consulta só os telefones visíveis. O cadastro tem milhares de travas;
   // buscar tudo a cada atualização era caro e podia truncar o resultado.

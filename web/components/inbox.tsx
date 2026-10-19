@@ -140,7 +140,8 @@ function AudioMsg({ src, accent }: { src: string; accent: string }) {
 /* Status da conversa combina a TRAVA (quem responde) com quem já atendeu:
    - Naia    → não travado, a IA cuida
    - Travado → travado e ninguém do time pegou ainda (precisa assumir)
-   - Você    → travado e o time já respondeu por aqui (em atendimento) */
+   - Você    → travado e o time já respondeu por aqui (em atendimento), ou
+               negócio de LP nova, que já nasce com o Rodrigues */
 const badgesStatus = {
   naia:    { texto: 'Naia',    cor: 'var(--brand-teal)' },
   travado: { texto: 'Travado', cor: 'var(--serious)' },
@@ -148,7 +149,7 @@ const badgesStatus = {
 } as const
 
 function statusConversa(c: Conversa): keyof typeof badgesStatus {
-  if (c.atendimento === 'humano') return c.humanoRespondeu ? 'voce' : 'travado'
+  if (c.atendimento === 'humano') return c.humanoRespondeu || c.responsavelHumano ? 'voce' : 'travado'
   return 'naia'
 }
 
