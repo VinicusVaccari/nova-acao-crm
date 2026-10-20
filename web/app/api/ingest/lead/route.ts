@@ -1,6 +1,7 @@
 import { integrationAuthorizedHeaderOnly, readBoundedJson, integrationRateLimit } from '@/lib/security/integration'
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { db } from '@/lib/db'
+import { avisarGrupoLpNova, type PrimeiroContato } from '@/lib/lp-nova'
 
 /* -----------------------------------------------------------------
    Porta de entrada de lead. Landing page, formulário, Meta Lead Ads,
@@ -160,6 +161,21 @@ export async function POST(req: Request) {
     const partes = [servico ? `Serviço: ${servico}` : '', mensagem ?? ''].filter(Boolean)
     const { error: erroNota } = await db.from('notes').insert({ opportunity_id: oppId, body: partes.join('\n') })
     if (erroNota) console.error('ingest lead nota:', erroNota.message)
+  }
+
+  // Lead novo de LP nova: nenhum agente atende, então avisa o grupo do
+  // comercial. Depois da resposta, para o formulário não esperar a Z-API.
+  const criado = data as { created?: boolean; atendimento?: string; primeiro_contato?: PrimeiroContato | null } | null
+  if (oppId && criado?.created && criado.atendimento === 'humano') {
+    after(() => avisarGrupoLpNova({
+      opportunityId: oppId,
+      nome, telefone,
+      empresa: texto(body.company_name), site: texto(body.website),
+      mensagem,
+      landingPage: payload.landing_page,
+      utmSource: texto(body.utm_source), utmMedium: texto(body.utm_medium), utmCampaign: texto(body.utm_campaign),
+      primeiroContato: criado.primeiro_contato ?? null,
+    }))
   }
 
   return NextResponse.json({ ...(data as object), avisos }, { status: 201, headers: CORS })

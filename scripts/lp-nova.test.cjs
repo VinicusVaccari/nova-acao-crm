@@ -162,6 +162,113 @@ test('pipeline: negócio de LP nova mostra "Rodrigues" mesmo sem trava; os outro
   assert.deepEqual(porId, { 'opp-lp': 'voce', 'opp-antigo': 'naia', 'opp-travado': 'travado' })
 })
 
+/* Aviso no grupo + teste de primeiro contato. A rota de entrada só chama o
+   aviso para negócio NOVO de LP nova; o texto e o envio ficam em lib/lp-nova. */
+async function ingerir(resultadoRpc) {
+  const avisos = []
+  const posResposta = []
+  process.env.INGEST_API_KEY = 'chave-teste'
+  const { POST } = load('web/app/api/ingest/lead/route.ts', {
+    'next/server': {
+      NextResponse: { json: (corpo, init) => ({ corpo, status: init?.status ?? 200 }) },
+      after: fn => { posResposta.push(fn) },
+    },
+    '@/lib/security/integration': {
+      integrationAuthorizedHeaderOnly: () => true,
+      readBoundedJson: async req => req.corpo,
+      integrationRateLimit: async () => null,
+    },
+    '@/lib/db': {
+      db: {
+        rpc: async () => ({ data: resultadoRpc, error: null }),
+        from: () => ({ insert: async () => ({ error: null }) }),
+      },
+    },
+    '@/lib/lp-nova': { avisarGrupoLpNova: async aviso => { avisos.push(aviso) } },
+  })
+  const resposta = await POST({
+    corpo: {
+      name: 'Ana Teste', phone: '11977771111', company_name: 'Ana Metal', website: 'anametal.com.br',
+      mensagem: 'Investe hoje: Google Ads\nOrçamento mensal para marketing: R$ 3 a 5 mil\nDor principal: Poucos leads',
+      landing_page: 'https://site.test/lp/trafego-pago', utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'lp-tp',
+    },
+    headers: { get: () => null },
+  })
+  for (const fn of posResposta) await fn()
+  return { resposta, avisos }
+}
+
+test('lead novo de LP nova: o grupo é avisado, com o resultado do teste 50/50', async () => {
+  const { resposta, avisos } = await ingerir({ opportunity_id: 'opp-lp', person_id: 'p-1', created: true, atendimento: 'humano', primeiro_contato: 'mensagem' })
+  assert.equal(resposta.status, 201)
+  assert.equal(avisos.length, 1)
+  assert.equal(avisos[0].opportunityId, 'opp-lp')
+  assert.equal(avisos[0].primeiroContato, 'mensagem')
+  assert.equal(avisos[0].landingPage, 'https://site.test/lp/trafego-pago')
+  assert.equal(avisos[0].utmCampaign, 'lp-tp')
+})
+
+test('lead dos formulários de sempre, ou lead que voltou: nenhum aviso no grupo', async () => {
+  const antigo = await ingerir({ opportunity_id: 'opp-antigo', person_id: 'p-2', created: true, atendimento: 'naia', primeiro_contato: null })
+  const voltou = await ingerir({ opportunity_id: 'opp-lp', person_id: 'p-1', created: false })
+  assert.deepEqual([antigo.avisos.length, voltou.avisos.length], [0, 0])
+})
+
+function carregarAviso({ grupo, envio = { ok: true, messageId: 'm-1', erro: null } }) {
+  const enviados = []
+  const auditoria = []
+  const mod = load('web/lib/lp-nova.ts', {
+    '@/lib/db': {
+      db: {
+        rpc: async nome => nome === 'fn_lp_aviso_grupo_whatsapp' ? { data: grupo, error: null } : { data: null, error: null },
+        from: () => ({ insert: async linha => { auditoria.push(linha); return { error: null } } }),
+      },
+    },
+    '@/lib/whatsapp': {
+      enviarWhatsappGrupo: async (destino, texto) => { enviados.push({ destino, texto }); return envio },
+      ocultarSegredosZapi: t => t,
+    },
+    '@/lib/erros': { detalharExcecao: e => String(e) },
+  })
+  return { ...mod, enviados, auditoria }
+}
+
+const AVISO = {
+  opportunityId: 'opp-lp', nome: 'Ana Teste', telefone: '+5511977771111', empresa: 'Ana Metal', site: 'anametal.com.br',
+  mensagem: 'Investe hoje: Google Ads\nOrçamento mensal para marketing: R$ 3 a 5 mil\nDor principal: Poucos leads',
+  landingPage: 'https://site.test/lp/trafego-pago?utm_source=google', utmSource: 'google', utmMedium: 'cpc', utmCampaign: 'lp-tp',
+  primeiroContato: 'ligacao',
+}
+
+test('texto do aviso: LP, telefone legível, respostas, origem e primeiro contato', () => {
+  const { textoAvisoLpNova } = carregarAviso({ grupo: null })
+  assert.equal(textoAvisoLpNova(AVISO), [
+    '🔔 *NOVO LEAD — LP Tráfego Pago*',
+    '*Nome:* Ana Teste',
+    '*WhatsApp:* (11) 97777-1111',
+    '*Empresa:* Ana Metal · anametal.com.br',
+    '*Investe hoje:* Google Ads',
+    '*Orçamento mensal:* R$ 3 a 5 mil',
+    '*Dor principal:* Poucos leads',
+    '*Origem:* google / cpc / lp-tp',
+    '*Primeiro contato (teste 50/50):* 📞 LIGAÇÃO',
+    'Acesse: https://nova-acao-crm.vercel.app/lead/opp-lp',
+  ].join('\n'))
+})
+
+test('aviso vai para o grupo do cofre e fica auditado; sem grupo no cofre, nada sai', async () => {
+  const comGrupo = carregarAviso({ grupo: '120363429271213364-group' })
+  assert.deepEqual(await comGrupo.avisarGrupoLpNova(AVISO), { status: 'enviado' })
+  assert.equal(comGrupo.enviados[0].destino, '120363429271213364-group')
+  assert.equal(comGrupo.auditoria[0].workflow, 'lp_nova_aviso_grupo')
+  assert.equal(comGrupo.auditoria[0].status, 'enviado')
+
+  const semGrupo = carregarAviso({ grupo: null })
+  assert.deepEqual(await semGrupo.avisarGrupoLpNova(AVISO), { status: 'config_invalida' })
+  assert.equal(semGrupo.enviados.length, 0)
+  assert.equal(semGrupo.auditoria[0].status, 'config_invalida')
+})
+
 test('mensagens: negócio de LP nova aparece como "Você"; travado sem resposta continua "Travado"', async () => {
   const banco = bancoPorTabela()
   const { carregarConversas } = load('web/lib/mensagens.ts', {

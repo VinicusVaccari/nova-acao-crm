@@ -10,6 +10,12 @@
 -- o negócio — se fosse um update depois, uma falha no meio deixaria o lead sem
 -- marca e a Naia faria o 1º contato em 5 minutos.
 --
+-- Teste de primeiro contato (mesma call): metade dos leads de LP nova o
+-- Rodrigues começa ligando, a outra metade por mensagem. A divisão é
+-- alternada, para fechar 50/50 mesmo com pouco volume, e sai no mesmo insert
+-- do negócio: anotação para o Rodrigues ver e evento
+-- lead.teste_primeiro_contato para medir depois.
+--
 -- Nota: as migrações posteriores à 0051 ficaram só no computador antigo; o
 -- corpo de fn_ingest_lead abaixo é o que estava em produção em 19/10/2026,
 -- com as únicas mudanças marcadas "LP nova".
@@ -23,7 +29,7 @@ as $function$
 declare
   v_person uuid; v_company uuid; v_tp bigint; v_opp uuid; v_existing uuid;
   v_channel text; v_naia uuid; v_clique_em timestamptz;
-  v_lp_nova boolean; v_responsavel_lp uuid; -- LP nova
+  v_lp_nova boolean; v_responsavel_lp uuid; v_primeiro_contato text; -- LP nova
   v_utm_source text := nullif(btrim(p_payload->>'utm_source'), '');
   v_utm_medium text := nullif(btrim(p_payload->>'utm_medium'), '');
   v_utm_campaign text := nullif(btrim(p_payload->>'utm_campaign'), '');
@@ -125,8 +131,23 @@ begin
   ) returning id into v_opp;
   insert into events (event_name, subject_type, subject_id, actor_type, payload, source)
   values ('lead.created', 'opportunity', v_opp, 'external', p_payload, 'api:ingest');
+  -- LP nova: teste de primeiro contato, alternado pelo número de sorteios já feitos.
+  -- A trava segura dois leads chegando juntos, senão os dois cairiam no mesmo grupo.
+  if v_lp_nova then
+    perform pg_advisory_xact_lock(hashtext('lead.teste_primeiro_contato'));
+    select case when count(*) % 2 = 0 then 'ligacao' else 'mensagem' end into v_primeiro_contato
+      from events where event_name = 'lead.teste_primeiro_contato';
+    insert into notes (opportunity_id, body)
+    values (v_opp, case v_primeiro_contato
+      when 'ligacao' then 'Teste de primeiro contato (50/50): LIGAÇÃO. O primeiro contato com este lead é por ligação.'
+      else 'Teste de primeiro contato (50/50): MENSAGEM. O primeiro contato com este lead é por mensagem no WhatsApp.' end);
+    insert into events (event_name, subject_type, subject_id, actor_type, payload, source)
+    values ('lead.teste_primeiro_contato', 'opportunity', v_opp, 'external',
+      jsonb_build_object('grupo', v_primeiro_contato), 'api:ingest');
+  end if;
   return jsonb_build_object('person_id', v_person, 'opportunity_id', v_opp, 'touchpoint_id', v_tp, 'created', true,
-    'atendimento', case when v_lp_nova then 'humano' else 'naia' end); -- LP nova
+    'atendimento', case when v_lp_nova then 'humano' else 'naia' end, -- LP nova
+    'primeiro_contato', v_primeiro_contato); -- LP nova
 end;
 $function$;
 
@@ -157,3 +178,20 @@ as $function$
     and not fn_trava_status(ph.value)
     and o.atendimento = 'naia' -- LP nova
 $function$;
+
+-- Grupo "Aviso de Lead (LPs novas)": o identificador fica no cofre, como o
+-- grupo da LUNA (fn_luna_grupo_whatsapp). Sem o segredo, o lead entra igual
+-- e o aviso fica registrado como config_invalida.
+create or replace function public.fn_lp_aviso_grupo_whatsapp()
+ returns text
+ language sql
+ stable security definer
+ set search_path to 'public', 'pg_temp'
+as $function$
+  select nullif(btrim(decrypted_secret), '')
+    from vault.decrypted_secrets
+   where name = 'lp_aviso_grupo_whatsapp'
+   limit 1;
+$function$;
+revoke all on function public.fn_lp_aviso_grupo_whatsapp() from public, anon, authenticated;
+grant execute on function public.fn_lp_aviso_grupo_whatsapp() to service_role;

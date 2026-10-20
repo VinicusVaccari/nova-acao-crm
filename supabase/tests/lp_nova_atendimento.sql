@@ -37,6 +37,30 @@ do $$ declare r jsonb; begin
     raise exception '/lp/ no meio do caminho não é LP nova'; end if;
 end $$;
 
+-- 3b. Teste de primeiro contato: os dois leads de LP nova acima caíram em
+--     grupos diferentes, cada um com anotação e evento; o antigo não entra.
+do $$ declare v_grupos text[]; begin
+  select array_agg(e.payload->>'grupo' order by e.payload->>'grupo') into v_grupos
+    from public.events e join public.opportunities o on o.id = e.subject_id
+    join public.identities i on i.person_id = o.person_id
+   where e.event_name = 'lead.teste_primeiro_contato'
+     and i.value in ('+5511900000001', '+5511900000002', '+5511900000003');
+  if v_grupos is distinct from array['ligacao', 'mensagem'] then
+    raise exception 'Teste 50/50: grupos % (esperado um de cada, só nos leads de LP nova)', v_grupos; end if;
+  if (select count(*) from public.notes n join public.opportunities o on o.id = n.opportunity_id
+       join public.identities i on i.person_id = o.person_id
+      where i.value in ('+5511900000001', '+5511900000002') and n.body like 'Teste de primeiro contato (50/50):%') <> 2 then
+    raise exception 'Teste 50/50: cada lead de LP nova deveria ter a anotação do grupo'; end if;
+end $$;
+
+-- 3c. Lead de LP nova que volta: cai no mesmo negócio e não ganha outro sorteio.
+do $$ declare r jsonb; begin
+  r := public.fn_ingest_lead(jsonb_build_object(
+    'name', 'Teste LP nova', 'phone', '+5511900000001', 'landing_page', '/lp/seo'));
+  if (r->>'created')::boolean or r ? 'primeiro_contato' then
+    raise exception 'Lead que voltou não deveria ganhar negócio nem sorteio novo: %', r; end if;
+end $$;
+
 -- 4. 1º contato da Naia: depois dos 5 minutos, só o negócio 'naia' entra na fila.
 update public.opportunities set created_at = now() - interval '10 minutes'
  where person_id in (select person_id from public.identities where value in ('+5511900000001', '+5511900000003'));
